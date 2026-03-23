@@ -16,6 +16,9 @@ import {
 } from 'chart.js';
 import api from '../services/api';
 
+
+ //hey i am hivang
+
 ChartJS.register(
   CategoryScale,
   LinearScale,

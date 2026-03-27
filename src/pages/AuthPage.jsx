@@ -1,63 +1,60 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Leaf, Globe, User, Phone, Lock, Briefcase, Sprout } from 'lucide-react';
+import { Leaf, Globe, User, Mail, Lock, Briefcase, Sprout, AlertCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import api from '../services/api';
+import authService from '../services/authService';
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
   const [role, setRole] = useState('farmer');
-  
+
   // Form State
   const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   const navigate = useNavigate();
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
+  const redirectByRole = (role) => {
+  if (role === 'farmer') navigate('/dashboard');
+  else if (role === 'buyer') navigate('/marketplace');
+  else navigate('/');
+};
 
-    try {
-      const endpoint = isLogin ? '/auth/login' : '/auth/register';
-      const payload = isLogin 
-        ? { phone, password } 
-        : { name, phone, password, role };
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  setLoading(true);
+  setError(null);
 
-      const { data } = await api.post(endpoint, payload);
-      
-      // Validate response has required fields
-      if (!data._id || !data.token || !data.role) {
-        throw new Error('Invalid response from server');
+  try {
+    let userData;
+    if (isLogin) {
+      userData = await authService.login(email, password);
+    } else {
+      // Validate form before signup
+      if (!name.trim()) {
+        throw new Error('Full name is required');
       }
-      
-      // Save user to local storage
-      localStorage.setItem('userInfo', JSON.stringify(data));
-      
-      // Redirect based on role
-      if (data.role === 'farmer') {
-         navigate('/dashboard');
-      } else if (data.role === 'buyer') {
-         navigate('/marketplace');
-      } else {
-         navigate('/'); // Default fallback
-      }
-    } catch (err) {
-      setError(err.response?.data?.message || err.message || 'Something went wrong');
-    } finally {
-      setLoading(false);
+      userData = await authService.register(name, email, password, role);
     }
-  };
+    
+    // Redirect based on role
+    redirectByRole(userData.role);
+  } catch (err) {
+    setError(err.message || 'An error occurred. Please try again.');
+    console.error('Auth error:', err);
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <div className="min-h-screen bg-brand-light-bg flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative overflow-hidden">
       {/* Background Elements */}
       <div className="absolute top-0 left-0 w-full h-96 bg-brand-green/10 -skew-y-6 transform origin-top-left -z-10"></div>
-      
+
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center items-center gap-2">
           <Leaf className="h-10 w-10 text-brand-green" />
@@ -69,10 +66,10 @@ export default function AuthPage() {
           {isLogin ? 'Welcome back to the farm' : 'Create your account'}
         </h2>
         <p className="mt-2 text-center text-sm text-gray-600">
-          {isLogin ? 'Don\'t have an account? ' : 'Already have an account? '}
-          <button 
+          {isLogin ? "Don't have an account? " : 'Already have an account? '}
+          <button
             type="button"
-            onClick={() => { setIsLogin(!isLogin); setError(null); }} 
+            onClick={() => { setIsLogin(!isLogin); setError(null); }}
             className="font-medium text-brand-green hover:text-green-700 transition-colors"
           >
             {isLogin ? 'Register now' : 'Log in instead'}
@@ -80,14 +77,14 @@ export default function AuthPage() {
         </p>
       </div>
 
-      <motion.div 
+      <motion.div
         className="mt-8 sm:mx-auto sm:w-full sm:max-w-md"
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
       >
         <div className="bg-white py-8 px-4 shadow-xl sm:rounded-2xl sm:px-10 border border-gray-100 relative">
-          
+
           {/* Language Selector */}
           <div className="absolute top-4 right-4 flex items-center gap-1 text-sm text-gray-500 cursor-pointer hover:text-gray-700">
             <Globe className="h-4 w-4" />
@@ -95,16 +92,18 @@ export default function AuthPage() {
           </div>
 
           <form className="space-y-6 mt-4" onSubmit={handleSubmit}>
-            
+
             {error && (
               <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm font-medium border border-red-100">
                 {error}
               </div>
             )}
 
+            {/* Name — Register only */}
             <AnimatePresence mode="popLayout">
               {!isLogin && (
                 <motion.div
+                  key="name-field"
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
                   exit={{ opacity: 0, height: 0 }}
@@ -120,6 +119,7 @@ export default function AuthPage() {
                       id="name"
                       name="name"
                       type="text"
+                      required={!isLogin}
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       className="block w-full pl-10 sm:text-sm border-gray-300 rounded-lg focus:ring-brand-green focus:border-brand-green py-3 border bg-gray-50 focus:bg-white transition-colors"
@@ -130,27 +130,29 @@ export default function AuthPage() {
               )}
             </AnimatePresence>
 
+            {/* Email */}
             <div>
-              <label htmlFor="phone" className="block text-sm font-medium text-gray-700">
-                Phone Number
+              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+                Email Address
               </label>
               <div className="mt-1 relative rounded-md shadow-sm">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Phone className="h-5 w-5 text-gray-400" />
+                  <Mail className="h-5 w-5 text-gray-400" />
                 </div>
                 <input
-                  id="phone"
-                  name="phone"
-                  type="text"
+                  id="email"
+                  name="email"
+                  type="email"
                   required
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   className="block w-full pl-10 sm:text-sm border-gray-300 rounded-lg focus:ring-brand-green focus:border-brand-green py-3 border bg-gray-50 focus:bg-white transition-colors"
-                  placeholder="+91 98765 43210"
+                  placeholder="you@example.com"
                 />
               </div>
             </div>
 
+            {/* Password */}
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-gray-700">
                 Password
@@ -172,9 +174,11 @@ export default function AuthPage() {
               </div>
             </div>
 
+            {/* Role Selector — Register only */}
             <AnimatePresence mode="popLayout">
               {!isLogin && (
                 <motion.div
+                  key="role-field"
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
                   exit={{ opacity: 0, height: 0 }}
@@ -183,16 +187,24 @@ export default function AuthPage() {
                     I am a
                   </label>
                   <div className="grid grid-cols-2 gap-4">
-                    <div 
+                    <div
                       onClick={() => setRole('farmer')}
-                      className={`cursor-pointer border rounded-lg p-4 flex flex-col items-center gap-2 transition-all ${role === 'farmer' ? 'border-brand-green bg-green-50 text-brand-green shadow-sm' : 'border-gray-200 hover:border-brand-green hover:bg-gray-50'}`}
+                      className={`cursor-pointer border rounded-lg p-4 flex flex-col items-center gap-2 transition-all ${
+                        role === 'farmer'
+                          ? 'border-brand-green bg-green-50 text-brand-green shadow-sm'
+                          : 'border-gray-200 hover:border-brand-green hover:bg-gray-50'
+                      }`}
                     >
                       <Sprout className="h-6 w-6" />
                       <span className="font-medium">Farmer</span>
                     </div>
-                    <div 
+                    <div
                       onClick={() => setRole('buyer')}
-                      className={`cursor-pointer border rounded-lg p-4 flex flex-col items-center gap-2 transition-all ${role === 'buyer' ? 'border-brand-green bg-green-50 text-brand-green shadow-sm' : 'border-gray-200 hover:border-brand-green hover:bg-gray-50'}`}
+                      className={`cursor-pointer border rounded-lg p-4 flex flex-col items-center gap-2 transition-all ${
+                        role === 'buyer'
+                          ? 'border-brand-green bg-green-50 text-brand-green shadow-sm'
+                          : 'border-gray-200 hover:border-brand-green hover:bg-gray-50'
+                      }`}
                     >
                       <Briefcase className="h-6 w-6" />
                       <span className="font-medium">Buyer</span>
@@ -202,6 +214,7 @@ export default function AuthPage() {
               )}
             </AnimatePresence>
 
+            {/* Remember me + Forgot password — Login only */}
             {isLogin && (
               <div className="flex items-center justify-between">
                 <div className="flex items-center">
@@ -215,9 +228,12 @@ export default function AuthPage() {
                     Remember me
                   </label>
                 </div>
-
                 <div className="text-sm">
-                  <button type="button" onClick={() => alert('Forgot password flow coming soon!')} className="font-medium text-brand-green hover:text-green-700">
+                  <button
+                    type="button"
+                    onClick={() => alert('Forgot password flow coming soon!')}
+                    className="font-medium text-brand-green hover:text-green-700"
+                  >
                     Forgot password?
                   </button>
                 </div>
@@ -230,11 +246,10 @@ export default function AuthPage() {
                 disabled={loading}
                 className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-brand-green hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-green transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
               >
-                {loading ? 'Processing...' : (isLogin ? 'Sign In' : 'Create Account')}
+                {loading ? 'Processing...' : isLogin ? 'Sign In' : 'Create Account'}
               </button>
             </div>
           </form>
-
         </div>
       </motion.div>
     </div>

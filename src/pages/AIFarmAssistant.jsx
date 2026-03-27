@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Mic, Bot, User, Globe, MoreVertical, ImagePlus } from 'lucide-react';
+import { Send, Mic, Bot, User, Globe, MoreVertical, ImagePlus, History, Trash2 } from 'lucide-react';
 import api from '../services/api';
+import MarkdownRenderer from '../components/MarkdownRenderer';
 
 export default function AIFarmAssistant() {
   const [messages, setMessages] = useState([
@@ -9,7 +10,23 @@ export default function AIFarmAssistant() {
   ]);
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [chatHistory, setChatHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [currentChatId, setCurrentChatId] = useState(null);
+  const [currentChatTitle, setCurrentChatTitle] = useState('New Chat');
+  const [firstQuestionAsked, setFirstQuestionAsked] = useState(false);
   const messagesEndRef = useRef(null);
+
+  const suggestionQuestions = [
+    "How do I identify and treat rice leaf blast disease?",
+    "What are the best fertilizers for wheat cultivation?",
+    "How to manage pest infestation in cotton crops?",
+    "What are current mandi prices for tomatoes?",
+    "Best practices for organic vegetable farming",
+    "How to prepare soil for potato planting?",
+    "What is the ideal irrigation schedule for sugarcane?",
+    "How to increase crop yield during monsoon season?"
+  ];
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -19,28 +36,197 @@ export default function AIFarmAssistant() {
     scrollToBottom();
   }, [messages, isTyping]);
 
+  // Auto-save chat to history whenever messages change
+  useEffect(() => {
+    if (currentChatId && messages.length > 1) {
+      saveCurrentChat();
+    }
+  }, [messages, currentChatTitle]);
+
+  // Fetch chat history on component mount
+  useEffect(() => {
+    // Chat history endpoints not yet implemented in backend
+    // fetchChatHistory();
+    loadChatHistoryFromStorage();
+  }, []);
+
+  const loadChatHistoryFromStorage = () => {
+    try {
+      const saved = localStorage.getItem('kisaan_chat_history');
+      if (saved) {
+        setChatHistory(JSON.parse(saved));
+      }
+    } catch (error) {
+      console.error("Error loading chat history:", error);
+    }
+  };
+
+  const saveChatHistoryToStorage = (history) => {
+    try {
+      localStorage.setItem('kisaan_chat_history', JSON.stringify(history));
+    } catch (error) {
+      console.error("Error saving chat history:", error);
+    }
+  };
+
+  const createNewChat = () => {
+    const newChatId = Date.now().toString();
+    setCurrentChatId(newChatId);
+    setCurrentChatTitle('New Chat');
+    setMessages([
+      { id: 1, text: "Namaste! I am your KisaanSetu AI Assistant. How can I help you today with your farming?", sender: 'ai', time: '10:00 AM' },
+    ]);
+    setFirstQuestionAsked(false);
+    return newChatId;
+  };
+
+  const updateChatTitle = (chatId, question) => {
+    // Generate title from first 50 characters of question
+    const title = question.length > 50 ? question.substring(0, 50) + '...' : question;
+    setCurrentChatTitle(title);
+    
+    if (chatId) {
+      // Update in history
+      setChatHistory(prev => {
+        const updated = prev.map(chat => 
+          chat.id === chatId ? { ...chat, title } : chat
+        );
+        saveChatHistoryToStorage(updated);
+        return updated;
+      });
+    }
+  };
+
+  const saveCurrentChat = () => {
+    if (!currentChatId || messages.length <= 1) return;
+
+    const userMessage = messages.find(m => m.sender === 'user');
+    const chatToSave = {
+      id: currentChatId,
+      title: currentChatTitle,
+      messages: messages,
+      timestamp: new Date().toLocaleString(),
+      firstQuestion: userMessage?.text || 'Chat'
+    };
+
+    setChatHistory(prev => {
+      const exists = prev.some(c => c.id === currentChatId);
+      const updated = exists 
+        ? prev.map(c => c.id === currentChatId ? chatToSave : c)
+        : [chatToSave, ...prev];
+      saveChatHistoryToStorage(updated);
+      return updated;
+    });
+  };
+
+  const fetchChatHistory = async () => {
+    try {
+      const userInfo = localStorage.getItem('userInfo');
+      const userId = userInfo ? JSON.parse(userInfo).id : null;
+
+      if (!userId) return;
+
+      setLoadingHistory(true);
+      const { data } = await api.get(`/chat/user/${userId}`);
+      
+      if (data && Array.isArray(data)) {
+        setChatHistory(data);
+      }
+    } catch (error) {
+      console.error("Error fetching chat history:", error);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  const loadChat = (chatId) => {
+    try {
+      const chat = chatHistory.find(c => c.id === chatId);
+      if (chat) {
+        setCurrentChatId(chatId);
+        setCurrentChatTitle(chat.title);
+        setMessages(chat.messages || []);
+        setFirstQuestionAsked(true);
+      }
+    } catch (error) {
+      console.error("Error loading chat:", error);
+    }
+  };
+
+  const deleteChat = async (chatId, e) => {
+    e.stopPropagation();
+    try {
+      setChatHistory(prev => {
+        const updated = prev.filter(chat => chat.id !== chatId);
+        saveChatHistoryToStorage(updated);
+        return updated;
+      });
+      if (currentChatId === chatId) {
+        createNewChat();
+      }
+    } catch (error) {
+      console.error("Error deleting chat:", error);
+    }
+  };
+
+  const handleSuggestionClick = (suggestion) => {
+    setInputText(suggestion);
+    // Optionally auto-submit
+    // You can trigger handleSend here if desired
+  };
+
   const handleSend = async (e) => {
     e.preventDefault();
     if (!inputText.trim()) return;
 
+    let chatId = currentChatId;
+    
+    // If no current chat, create one
+    if (!chatId) {
+      chatId = createNewChat();
+      setCurrentChatId(chatId);
+    }
+
     const newUserMsg = {
-      id: messages.length + 1,
+      id: Date.now() + Math.random(),
       text: inputText,
       sender: 'user',
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
     setMessages(prev => [...prev, newUserMsg]);
+    
+    // Update title on first user question
+    if (!firstQuestionAsked) {
+      updateChatTitle(chatId, inputText);
+      setFirstQuestionAsked(true);
+    }
+
     const messageToSend = inputText;
     setInputText('');
     setIsTyping(true);
 
     try {
-      const { data } = await api.post('/ai/chat', { message: messageToSend });
+      // Get user ID from localStorage
+      const userInfo = localStorage.getItem('userInfo');
+      const userId = userInfo ? JSON.parse(userInfo).id : null;
+
+      if (!userId) {
+        throw new Error('User ID not found');
+      }
+
+      // Call the Gemini API endpoint with POST request
+      const { data } = await api.post('/gemini', { 
+        id: userId,
+        chat: messageToSend
+      });
+      
+      // Extract the AI response from the API response
+      let aiResponse = data || "Sorry, I couldn't process your request. Please try again.";
       
       const newAiMsg = {
-        id: messages.length + 2,
-        text: data.reply,
+        id: Date.now() + Math.random(),
+        text: aiResponse,
         sender: 'ai',
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
@@ -48,7 +234,7 @@ export default function AIFarmAssistant() {
     } catch (error) {
       console.error("AI Chat error:", error);
       const errorMsg = {
-        id: messages.length + 2,
+        id: Date.now() + Math.random(),
         text: "Sorry, I am having trouble connecting to the server right now. Please try again later.",
         sender: 'ai',
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -60,7 +246,65 @@ export default function AIFarmAssistant() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-64px)] bg-gray-50 max-w-4xl mx-auto border-x border-gray-200 shadow-sm">
+    <div className="flex h-[calc(100vh-64px)] bg-gray-50">
+      
+      {/* Sidebar - Chat History */}
+      <div className="w-64 bg-white border-r border-gray-200 flex flex-col shadow-sm overflow-hidden">
+        
+        {/* Sidebar Header */}
+        <div className="p-4 border-b border-gray-200">
+          <div className="flex items-center gap-2 mb-4">
+            <History className="w-5 h-5 text-brand-green" />
+            <h3 className="font-bold text-gray-900">Chat History</h3>
+          </div>
+          <button 
+            onClick={createNewChat}
+            className="w-full bg-brand-green text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-green-700 transition-colors"
+          >
+            New Chat
+          </button>
+        </div>
+
+        {/* Chat History List */}
+        <div className="flex-1 overflow-y-auto">
+          {chatHistory.length === 0 ? (
+            <div className="p-4 text-center text-gray-400 text-sm">No chat history yet</div>
+          ) : (
+            <div className="p-2 space-y-2">
+              {chatHistory.map((chat) => (
+                <motion.div
+                  key={chat.id}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="group"
+                >
+                  <button
+                    onClick={() => loadChat(chat.id)}
+                    className={`w-full text-left px-3 py-2 rounded-lg transition-colors text-sm truncate flex items-center justify-between ${
+                      currentChatId === chat.id 
+                        ? 'bg-brand-green text-white' 
+                        : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+                    }`}
+                  >
+                    <span className="truncate flex-1" title={chat.title}>{chat.title}</span>
+                    <button
+                      onClick={(e) => deleteChat(chat.id, e)}
+                      className={`opacity-0 group-hover:opacity-100 p-1 transition-all ${
+                        currentChatId === chat.id ? 'hover:text-red-200' : 'hover:text-red-500'
+                      }`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </button>
+                </motion.div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col bg-gray-50 border-x border-gray-200 shadow-sm">
       
       {/* Chat Header */}
       <div className="bg-white px-6 py-4 border-b border-gray-200 flex justify-between items-center shadow-sm z-10">
@@ -70,7 +314,7 @@ export default function AIFarmAssistant() {
             <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
           </div>
           <div>
-            <h2 className="text-lg font-bold text-gray-900 leading-tight">AI Agri-Expert</h2>
+            <h2 className="text-lg font-bold text-gray-900 leading-tight">{currentChatTitle}</h2>
             <p className="text-xs text-green-600 font-medium">Online & Ready to Help</p>
           </div>
         </div>
@@ -105,7 +349,13 @@ export default function AIFarmAssistant() {
                 </div>
                 
                 <div className={`relative px-4 py-3 shadow-sm ${msg.sender === 'user' ? 'bg-brand-green text-white rounded-2xl rounded-tr-none' : 'bg-white text-gray-800 border border-gray-100 rounded-2xl rounded-tl-none'}`}>
-                  <p className="text-[15px] leading-relaxed font-sans">{msg.text}</p>
+                  {msg.sender === 'ai' ? (
+                    <div className="text-[15px] leading-relaxed font-sans">
+                      <MarkdownRenderer text={msg.text} />
+                    </div>
+                  ) : (
+                    <p className="text-[15px] leading-relaxed font-sans">{msg.text}</p>
+                  )}
                   <span className={`text-[10px] mt-2 block text-right font-medium ${msg.sender === 'user' ? 'text-green-100' : 'text-gray-400'}`}>
                     {msg.time}
                   </span>
@@ -138,6 +388,27 @@ export default function AIFarmAssistant() {
 
       {/* Input Area */}
       <div className="bg-white p-4 border-t border-gray-200">
+        {/* Show suggestions above input when chat is fresh */}
+        {messages.length === 1 && (
+          <div className="mb-4">
+            <p className="text-xs font-semibold text-gray-600 mb-3 px-2">Try asking:</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-4">
+              {suggestionQuestions.slice(0, 4).map((question, idx) => (
+                <motion.button
+                  key={idx}
+                  initial={{ opacity: 0, y: 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: idx * 0.05 }}
+                  type="button"
+                  onClick={() => handleSuggestionClick(question)}
+                  className="text-left text-xs px-3 py-2 bg-green-50 border border-green-200 text-gray-700 rounded-lg hover:bg-brand-green hover:text-white hover:border-brand-green transition-all duration-200 font-medium truncate"
+                >
+                  {question}
+                </motion.button>
+              ))}
+            </div>
+          </div>
+        )}
         <form onSubmit={handleSend} className="flex gap-2 relative">
           <button type="button" className="p-3 text-gray-400 hover:text-brand-green transition-colors absolute left-1 top-1/2 -translate-y-1/2 z-10">
             <ImagePlus className="w-6 h-6" />
@@ -166,6 +437,7 @@ export default function AIFarmAssistant() {
         </form>
       </div>
 
+      </div>
     </div>
   );
 }

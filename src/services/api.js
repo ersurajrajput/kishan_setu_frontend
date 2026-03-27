@@ -12,9 +12,19 @@ api.interceptors.request.use(
     (config) => {
         const userInfo = localStorage.getItem('userInfo');
         if (userInfo) {
-            const { token } = JSON.parse(userInfo);
-            if (token) {
-                config.headers.Authorization = `Bearer ${token}`;
+            try {
+                const parsedUserInfo = JSON.parse(userInfo);
+                // Try different token property names based on backend response structure
+                const token = parsedUserInfo.token || parsedUserInfo.accessToken || parsedUserInfo.data?.token;
+                if (token) {
+                    config.headers.Authorization = `Bearer ${token}`;
+                    console.log('[API] Token added to request headers');
+                } else {
+                    // If no token but user is logged in, still allow requests (backend may not use tokens)
+                    console.log('[API] No token found, but user info exists. Proceeding without token.');
+                }
+            } catch (err) {
+                console.error('[API] Error parsing userInfo:', err);
             }
         }
         return config;
@@ -28,8 +38,15 @@ api.interceptors.request.use(
 api.interceptors.response.use(
     (response) => response,
     (error) => {
+        console.error('[API] Request error:', {
+            status: error.response?.status,
+            message: error.response?.data?.message || error.message,
+            url: error.config?.url,
+        });
+        
         if (error.response?.status === 401) {
             // Token expired or unauthorized
+            console.warn('[API] 401 Unauthorized - clearing user info and redirecting to login');
             localStorage.removeItem('userInfo');
             window.location.href = '/login';
         }

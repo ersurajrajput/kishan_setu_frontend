@@ -38,11 +38,16 @@ export default function Profile() {
         const storedUser = localStorage.getItem('userInfo');
         if (storedUser) {
           const parsed = JSON.parse(storedUser);
+          
+          // Safely handle role - provide fallback if null or undefined
+          const role = parsed.role && parsed.role.length > 0 
+            ? parsed.role.charAt(0).toUpperCase() + parsed.role.slice(1)
+            : DUMMY_USER.role;
+          
           const newUserInfo = {
-            ...DUMMY_USER,
-            name: parsed.name,
-            phone: parsed.phone,
-            role: parsed.role.charAt(0).toUpperCase() + parsed.role.slice(1),
+            name: parsed.name || DUMMY_USER.name,
+            phone: parsed.phone || DUMMY_USER.phone,
+            role: role,
             location: parsed.location || DUMMY_USER.location,
           };
           setUserInfo(newUserInfo);
@@ -141,7 +146,7 @@ export default function Profile() {
                   className="w-full h-full object-cover"
                 />
               </div>
-              {DUMMY_USER.verified && (
+              {userInfo.name && (
                 <div className="absolute bottom-1 right-1 bg-white rounded-full p-1 shadow-sm">
                   <ShieldCheck className="w-6 h-6 text-brand-green fill-green-50" />
                 </div>

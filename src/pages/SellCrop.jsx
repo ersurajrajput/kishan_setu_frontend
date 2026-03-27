@@ -45,6 +45,7 @@ export default function SellCrop() {
     try {
       const formData = new FormData();
       formData.append('cropName', data.cropName);
+      formData.append('category', data.category);
       formData.append('quantity', data.quantity);
       formData.append('price', data.price);
       formData.append('location', data.location);
@@ -52,7 +53,7 @@ export default function SellCrop() {
         formData.append('image', imageFile);
       }
 
-      await api.post('/crops', formData, {
+      await api.post('/product', formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }
@@ -106,6 +107,24 @@ export default function SellCrop() {
                     />
                   </div>
                   {errors.cropName && <span className="text-red-500 text-xs mt-1 block">Crop name is required</span>}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Crop Category</label>
+                  <div className="mt-1 relative rounded-md shadow-sm">
+                    <select
+                      {...register("category", { required: true })}
+                      className="block w-full border-gray-300 rounded-lg focus:ring-brand-green focus:border-brand-green py-3 px-4 border bg-gray-50 focus:bg-white transition-colors"
+                    >
+                      <option value="">Select a category</option>
+                      <option value="Grains">Grains</option>
+                      <option value="Vegetables">Vegetables</option>
+                      <option value="Fruits">Fruits</option>
+                      <option value="Pulses">Pulses</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                  {errors.category && <span className="text-red-500 text-xs mt-1 block">Category is required</span>}
                 </div>
 
                 <div>

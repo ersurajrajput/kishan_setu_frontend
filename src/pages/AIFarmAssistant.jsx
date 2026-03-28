@@ -2,9 +2,15 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, Mic, Bot, User, Globe, MoreVertical, ImagePlus, History, Trash2 } from 'lucide-react';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import MarkdownRenderer from '../components/MarkdownRenderer';
+import AlertBox from '../components/AlertBox';
+import { getHumanReadableError, getContextualError } from '../utils/errorHandler';
 
 export default function AIFarmAssistant() {
+  const { user } = useAuth();
+  const userId = user?.id;
+
   const [messages, setMessages] = useState([
     { id: 1, text: "Namaste! I am your KisaanSetu AI Assistant. How can I help you today with your farming?", sender: 'ai', time: '10:00 AM' },
   ]);
@@ -15,6 +21,7 @@ export default function AIFarmAssistant() {
   const [currentChatId, setCurrentChatId] = useState(null);
   const [currentChatTitle, setCurrentChatTitle] = useState('New Chat');
   const [firstQuestionAsked, setFirstQuestionAsked] = useState(false);
+  const [error, setError] = useState(null);
   const messagesEndRef = useRef(null);
 
   const suggestionQuestions = [
@@ -47,12 +54,16 @@ export default function AIFarmAssistant() {
   useEffect(() => {
     // Chat history endpoints not yet implemented in backend
     // fetchChatHistory();
-    loadChatHistoryFromStorage();
-  }, []);
+    if (userId) {
+      loadChatHistoryFromStorage();
+    }
+  }, [userId]);
 
   const loadChatHistoryFromStorage = () => {
     try {
-      const saved = localStorage.getItem('kisaan_chat_history');
+      if (!userId) return;
+      const storageKey = `kisaan_chat_history_${userId}`;
+      const saved = localStorage.getItem(storageKey);
       if (saved) {
         setChatHistory(JSON.parse(saved));
       }
@@ -63,7 +74,12 @@ export default function AIFarmAssistant() {
 
   const saveChatHistoryToStorage = (history) => {
     try {
-      localStorage.setItem('kisaan_chat_history', JSON.stringify(history));
+      if (!userId) {
+        console.warn('User ID not available, chat history not saved');
+        return;
+      }
+      const storageKey = `kisaan_chat_history_${userId}`;
+      localStorage.setItem(storageKey, JSON.stringify(history));
     } catch (error) {
       console.error("Error saving chat history:", error);
     }
@@ -98,7 +114,7 @@ export default function AIFarmAssistant() {
   };
 
   const saveCurrentChat = () => {
-    if (!currentChatId || messages.length <= 1) return;
+    if (!currentChatId || !userId || messages.length <= 1) return;
 
     const userMessage = messages.find(m => m.sender === 'user');
     const chatToSave = {
@@ -106,7 +122,8 @@ export default function AIFarmAssistant() {
       title: currentChatTitle,
       messages: messages,
       timestamp: new Date().toLocaleString(),
-      firstQuestion: userMessage?.text || 'Chat'
+      firstQuestion: userMessage?.text || 'Chat',
+      userId: userId
     };
 
     setChatHistory(prev => {
@@ -121,19 +138,21 @@ export default function AIFarmAssistant() {
 
   const fetchChatHistory = async () => {
     try {
-      const userInfo = localStorage.getItem('userInfo');
-      const userId = userInfo ? JSON.parse(userInfo).id : null;
-
       if (!userId) return;
 
       setLoadingHistory(true);
       const { data } = await api.get(`/chat/user/${userId}`);
       
       if (data && Array.isArray(data)) {
-        setChatHistory(data);
+        // Save fetched history to localStorage for offline access
+        const historyWithUserId = data.map(chat => ({ ...chat, userId }));
+        setChatHistory(historyWithUserId);
+        saveChatHistoryToStorage(historyWithUserId);
       }
     } catch (error) {
       console.error("Error fetching chat history:", error);
+      // Fall back to local storage if API fails
+      loadChatHistoryFromStorage();
     } finally {
       setLoadingHistory(false);
     }
@@ -212,7 +231,15 @@ export default function AIFarmAssistant() {
       const userId = userInfo ? JSON.parse(userInfo).id : null;
 
       if (!userId) {
-        throw new Error('User ID not found');
+        setError('You must be logged in to use the AI assistant. Please log in first.');
+        const errorMsg = {
+          id: Date.now() + Math.random(),
+          text: "I need you to be logged in to help you. Please log in first.",
+          sender: 'ai',
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
+        setMessages(prev => [...prev, errorMsg]);
+        return;
       }
 
       // Call the Gemini API endpoint with POST request
@@ -233,9 +260,11 @@ export default function AIFarmAssistant() {
       setMessages(prev => [...prev, newAiMsg]);
     } catch (error) {
       console.error("AI Chat error:", error);
+      const errorMessage = getHumanReadableError(error);
+      setError(errorMessage);
       const errorMsg = {
         id: Date.now() + Math.random(),
-        text: "Sorry, I am having trouble connecting to the server right now. Please try again later.",
+        text: errorMessage || "Sorry, I am having trouble connecting. Please try again later.",
         sender: 'ai',
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
@@ -306,6 +335,17 @@ export default function AIFarmAssistant() {
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col bg-gray-50 border-x border-gray-200 shadow-sm">
       
+      {/* Error Alert */}
+      {error && (
+        <div className="bg-white border-b border-gray-200 px-6 py-4">
+          <AlertBox
+            message={error}
+            type="error"
+            onDismiss={() => setError(null)}
+          />
+        </div>
+      )}
+
       {/* Chat Header */}
       <div className="bg-white px-6 py-4 border-b border-gray-200 flex justify-between items-center shadow-sm z-10">
         <div className="flex items-center gap-3">

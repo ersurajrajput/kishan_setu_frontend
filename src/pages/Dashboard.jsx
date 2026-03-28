@@ -14,9 +14,9 @@ import {
   Filler
 } from 'chart.js';
 import api from '../services/api';
-
-
- //hey i am hivang
+import { useAuth } from '../context/AuthContext';
+import AlertBox from '../components/AlertBox';
+import { getContextualError } from '../utils/errorHandler';
 
 ChartJS.register(
   CategoryScale,
@@ -28,8 +28,6 @@ ChartJS.register(
   Legend,
   Filler
 );
-
-
 
 const chartData = {
   labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
@@ -64,6 +62,9 @@ const chartOptions = {
 };
 
 export default function Dashboard() {
+  const { user } = useAuth();
+  const userId = user?.id;
+
   const [stats, setStats] = useState({
     totalCrops: 0,
     ordersReceived: 0,
@@ -72,24 +73,44 @@ export default function Dashboard() {
   });
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [listings, setListings] = useState([]);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
+      setLoading(true);
+      setError(null);
       try {
-        const [cropsRes, ordersRes, weatherRes] = await Promise.all([
-          api.get('/crops/my').catch(() => ({ data: [] })),
-          api.get('/orders/my').catch(() => ({ data: [] })),
-          api.get('/weather?city=Sehore').catch(() => ({ data: {} })),
-        ]);
+        if (!userId) {
+          console.log('User ID not available yet');
+          setLoading(false);
+          return;
+        }
+
+        // Fetch products/listings by seller ID using the API
+        const listingsRes = await api.get(`/product/seller/${userId}`)
+          .catch(err => {
+            console.error('Error fetching seller products:', err.response?.status);
+            return { data: [] };
+          });
+        
+        const listings = listingsRes.data || [];
+        
+        const cropsRes = await api.get('/crops/my').catch(() => ({ data: [] }));
+        const ordersRes = await api.get('/orders/my').catch(() => ({ data: [] }));
+        const weatherRes = await api.get('/weather?city=Sehore').catch(() => ({ data: {} }));
 
         const crops = cropsRes.data || [];
         const orders = ordersRes.data || [];
         const weather = weatherRes.data || {};
 
+        // Store listings in state
+        setListings(listings);
+
         // Calculate stats
         setStats({
-          totalCrops: crops.length,
-          ordersReceived: orders.filter(o => o.cropId?.farmerId?._id === JSON.parse(localStorage.getItem('userInfo') || '{}')?._id).length || orders.length,
+          totalCrops: listings.length || crops.length,
+          ordersReceived: orders.length || 0,
           marketTrend: 'Up 4%',
           weather: weather.current ? `${Math.round(weather.current.temp)}°C / ${weather.current.condition}` : '28°C / Sunny',
         });
@@ -115,6 +136,8 @@ export default function Dashboard() {
         setNotifications(newNotifications);
 
       } catch (error) {
+        const errorMessage = getContextualError('profile', error);
+        setError(errorMessage);
         console.error("Error fetching dashboard data:", error);
       } finally {
         setLoading(false);
@@ -122,7 +145,7 @@ export default function Dashboard() {
     };
 
     fetchDashboardData();
-  }, []);
+  }, [userId]);
 
   const dashboardCards = [
     { title: 'Total Crops Listed', value: stats.totalCrops.toString(), icon: <Package className="h-6 w-6 text-brand-green" />, color: 'bg-green-100' },
@@ -142,6 +165,17 @@ export default function Dashboard() {
           </div>
           
           <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8 mt-8">
+            {/* Error Alert */}
+            {error && (
+              <div className="mb-6">
+                <AlertBox
+                  message={error}
+                  type="error"
+                  onDismiss={() => setError(null)}
+                />
+              </div>
+            )}
+            
             {/* Dashboard Cards */}
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
               {dashboardCards.map((card, idx) => (

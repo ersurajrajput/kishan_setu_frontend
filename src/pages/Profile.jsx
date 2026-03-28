@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { User, Phone, MapPin, Globe, Edit3, ShoppingCart, Clock, LogOut, ChevronRight, CheckCircle, ShieldCheck } from 'lucide-react';
+import { User, Phone, MapPin, Globe, Edit3, ShoppingCart, Clock, LogOut, ChevronRight, CheckCircle, ShieldCheck, Upload, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
 import api from '../services/api';
-
+import { useAuth } from '../context/AuthContext';
+import AlertBox from '../components/AlertBox';
+import { getHumanReadableError, getContextualError } from '../utils/errorHandler';
 
 const DUMMY_USER = {
   name: 'Ramesh Singh',
@@ -20,16 +23,26 @@ const ORDER_HISTORY = [
   { id: 'ORD-1041', crop: 'Organic Red Onions', date: '02 Mar 2026', status: 'Processing', amount: '₹4,500' },
 ];
 
-const MY_LISTINGS = [
-  { id: 1, crop: 'Desi Chickpeas (Chana)', qty: '800 kg', status: 'Active Listing' },
-];
-
 export default function Profile() {
+  const { user } = useAuth();
+  const userId = user?.id;
+
   const [userInfo, setUserInfo] = useState(DUMMY_USER);
   const [orders, setOrders] = useState([]);
   const [listings, setListings] = useState([]);
+  const [allListingsData, setAllListingsData] = useState([]); // Store full product data
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState(DUMMY_USER);
+  const [isEditingListing, setIsEditingListing] = useState(false);
+  const [editingListingId, setEditingListingId] = useState(null);
+  const [editListingForm, setEditListingForm] = useState(null);
+  const [profileImage, setProfileImage] = useState('https://images.unsplash.com/photo-1595168051410-a292d37cace7?w=400&auto=format&fit=crop&q=60');
+  const [profileImageFile, setProfileImageFile] = useState(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadingListing, setUploadingListing] = useState(false);
+  const [managingListingId, setManagingListingId] = useState(null);
+  const [error, setError] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -38,6 +51,9 @@ export default function Profile() {
         const storedUser = localStorage.getItem('userInfo');
         if (storedUser) {
           const parsed = JSON.parse(storedUser);
+          
+          // Get userId from localStorage as fallback since AuthContext might not be ready
+          const currentUserId = parsed.id || userId;
           
           // Safely handle role - provide fallback if null or undefined
           const role = parsed.role && parsed.role.length > 0 
@@ -52,42 +68,60 @@ export default function Profile() {
           };
           setUserInfo(newUserInfo);
           setEditForm(newUserInfo);
+
+          // Fetch Orders and Listings concurrently
+          const [ordersRes, listingsRes] = await Promise.all([
+            api.get('/orders/my').catch(() => ({ data: [] })),
+            currentUserId ? api.get(`/product/seller/${currentUserId}`)
+              .catch(err => {
+                console.error('Error fetching seller products:', err.response?.status);
+                return { data: [] };
+              })
+            : Promise.resolve({ data: [] })
+          ]);
+          
+          console.log('Seller ID:', currentUserId);
+          console.log('Listings Response:', listingsRes);
+          const fetchedOrders = ordersRes.data.map(o => ({
+            id: o._id.substring(o._id.length - 8).toUpperCase(),
+            crop: o.cropId?.cropName || 'Unknown Crop',
+            date: new Date(o.createdAt).toLocaleDateString(),
+            status: o.status,
+            amount: `₹${(o.cropId?.price || 0) * parseInt(o.quantity || 0)}`
+          }));
+          setOrders(fetchedOrders.length ? fetchedOrders : ORDER_HISTORY);
+
+          // Map Listings from products endpoint
+          const listingsData = listingsRes.data || [];
+          
+          // Handle both array and single object responses
+          const listingsArray = Array.isArray(listingsData) 
+            ? listingsData 
+            : (listingsData && typeof listingsData === 'object' ? [listingsData] : []);
+          
+          // Store full product data for editing
+          setAllListingsData(listingsArray);
+          
+          const fetchedListings = listingsArray
+            .map(l => ({
+              id: l._id || l.id,
+              crop: l.name || l.cropName,
+              qty: `${l.quantity} ${l.unit || 'kg'}`,
+              status: 'Active Listing',
+              price: l.price
+            }));
+          setListings(fetchedListings);
         } else {
           navigate('/auth'); // Redirect to login if no user
           return;
         }
-
-        // Fetch Orders and Listings concurrently
-        const [ordersRes, listingsRes] = await Promise.all([
-          api.get('/orders/my').catch(() => ({ data: [] })),
-          api.get('/crops/my').catch(() => ({ data: [] }))
-        ]);
-        
-        // Map Orders
-        const fetchedOrders = ordersRes.data.map(o => ({
-          id: o._id.substring(o._id.length - 8).toUpperCase(),
-          crop: o.cropId?.cropName || 'Unknown Crop',
-          date: new Date(o.createdAt).toLocaleDateString(),
-          status: o.status,
-          amount: `₹${(o.cropId?.price || 0) * parseInt(o.quantity || 0)}`
-        }));
-        setOrders(fetchedOrders.length ? fetchedOrders : ORDER_HISTORY);
-
-        // Map Listings
-        const fetchedListings = listingsRes.data.map(l => ({
-          id: l._id,
-          crop: l.cropName,
-          qty: `${l.quantity}`,
-          status: 'Active Listing'
-        }));
-        setListings(fetchedListings.length ? fetchedListings : MY_LISTINGS);
 
       } catch (error) {
         console.error("Error fetching profile data", error);
       }
     };
     fetchUserData();
-  }, [navigate]);
+  }, [navigate, userId]);
 
   const handleLogout = () => {
     localStorage.removeItem('userInfo');
@@ -100,6 +134,267 @@ export default function Profile() {
     const current = JSON.parse(localStorage.getItem('userInfo')) || {};
     localStorage.setItem('userInfo', JSON.stringify({ ...current, name: editForm.name, phone: editForm.phone, location: editForm.location }));
     setIsEditing(false);
+  };
+
+  const validateProfileImageFile = (file) => {
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    
+    if (file.size > maxSize) {
+      setError(`Image is too large (${(file.size / 1024 / 1024).toFixed(2)}MB). Please use an image smaller than 5MB.`);
+      return false;
+    }
+    
+    if (!file.type.startsWith('image/')) {
+      setError('Invalid file type. Please select an image file (PNG, JPG, GIF, etc.)');
+      return false;
+    }
+    
+    return true;
+  };
+
+  const handleProfileImageChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      
+      if (!validateProfileImageFile(file)) {
+        return;
+      }
+      
+      setProfileImageFile(file);
+      setError(null);
+      
+      // Create preview
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setProfileImage(event.target.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleUploadProfileImage = async () => {
+    if (!profileImageFile) {
+      setError('Please select an image first');
+      return;
+    }
+
+    setUploadingImage(true);
+    setError(null);
+    
+    try {
+      // Validate file size again before upload
+      const maxSize = 5 * 1024 * 1024; // 5MB
+      if (profileImageFile.size > maxSize) {
+        setError(`Image is too large (${(profileImageFile.size / 1024 / 1024).toFixed(2)}MB). Please use an image smaller than 5MB.`);
+        setUploadingImage(false);
+        return;
+      }
+
+      // Upload to Cloudinary via FormData
+      const formData = new FormData();
+      formData.append('file', profileImageFile);
+      formData.append('upload_preset', 'kisaan_setu'); // This should be configured in your Cloudinary account
+      
+      const cloudinaryResponse = await axios.post(
+        'https://api.cloudinary.com/v1_1/dqvvk5sof/image/upload',
+        formData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          }
+        }
+      );
+
+      const cloudinaryUrl = cloudinaryResponse.data.secure_url;
+
+      // Update profile with the new image URL from Cloudinary
+      const currentUserId = userId || JSON.parse(localStorage.getItem('userInfo') || '{}').id;
+      
+      if (currentUserId) {
+        // Optional: Save the profile image URL to the backend
+        await api.post('/profile/update', {
+          userId: currentUserId,
+          profileImageUrl: cloudinaryUrl
+        }).catch(err => {
+          // If backend profile update fails, we still have the Cloudinary URL
+          console.warn('Could not save profile image URL to backend:', err);
+        });
+      }
+
+      setProfileImage(cloudinaryUrl);
+      setSuccessMessage('Profile picture updated successfully!');
+      setProfileImageFile(null);
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (error) {
+      console.error('Error uploading image to Cloudinary:', error);
+      
+      if (error.response?.status === 413) {
+        setError('Image is too large. Please use an image smaller than 5MB.');
+      } else if (error.response?.data?.error?.message) {
+        setError(`Upload error: ${error.response.data.error.message}`);
+      } else {
+        const errorMessage = getHumanReadableError(error) || 'Failed to upload profile picture. Please try again.';
+        setError(errorMessage);
+      }
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const handleDeleteListing = async (listingId) => {
+    if (window.confirm('Are you sure you want to delete this listing?')) {
+      try {
+        setError(null);
+        await api.delete(`/product/${listingId}`);
+        setSuccessMessage('Listing deleted successfully');
+        // Refresh listings
+        setListings(listings.filter(l => l.id !== listingId));
+        setAllListingsData(allListingsData.filter(l => (l._id || l.id) !== listingId));
+        setTimeout(() => setSuccessMessage(null), 3000);
+      } catch (error) {
+        const errorMessage = getHumanReadableError(error);
+        setError(errorMessage);
+      }
+    }
+  };
+
+  const handleEditListing = (listingId) => {
+    const productData = allListingsData.find(p => (p._id || p.id) === listingId);
+    if (productData) {
+      setEditListingForm({
+        id: productData._id || productData.id,
+        name: productData.name || productData.cropName,
+        quantity: productData.quantity,
+        price: productData.price,
+        location: productData.location,
+        type: productData.type,
+        imageUrl: productData.imageUrl,
+        currentImageFile: null
+      });
+      setEditingListingId(listingId);
+      setIsEditingListing(true);
+    }
+  };
+
+  const handleEditListingImageChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setEditListingForm({
+        ...editListingForm,
+        currentImageFile: file
+      });
+    }
+  };
+
+  const handleUpdateListing = async () => {
+    if (!editListingForm) return;
+
+    setUploadingListing(true);
+    setError(null);
+
+    try {
+      // Validate all required fields
+      if (!editListingForm.name?.trim()) {
+        setError('Product name is required.');
+        setUploadingListing(false);
+        return;
+      }
+      if (!editListingForm.quantity || parseFloat(editListingForm.quantity) <= 0) {
+        setError('Quantity must be greater than 0.');
+        setUploadingListing(false);
+        return;
+      }
+      if (!editListingForm.price || parseFloat(editListingForm.price) <= 0) {
+        setError('Price must be greater than 0.');
+        setUploadingListing(false);
+        return;
+      }
+      if (!editListingForm.location?.trim()) {
+        setError('Location is required.');
+        setUploadingListing(false);
+        return;
+      }
+      if (!editListingForm.type) {
+        setError('Product type is required.');
+        setUploadingListing(false);
+        return;
+      }
+      let imageUrl = editListingForm.imageUrl;
+
+      // Upload new image if provided
+      if (editListingForm.currentImageFile) {
+        const formDataImage = new FormData();
+        formDataImage.append('file', editListingForm.currentImageFile);
+        formDataImage.append('upload_preset', 'kisaan_setu');
+
+        const cloudinaryResponse = await axios.post(
+          'https://api.cloudinary.com/v1_1/ddhnyvjzd/image/upload',
+          formDataImage,
+          {
+            headers: {
+              'Content-Type': 'multipart/form-data'
+            }
+          }
+        );
+        imageUrl = cloudinaryResponse.data.secure_url;
+      }
+
+      // Update product with multipart form data
+      const formData = new FormData();
+      formData.append('id', editListingForm.id);
+      formData.append('name', editListingForm.name);
+      formData.append('quantity', editListingForm.quantity);
+      formData.append('price', editListingForm.price);
+      formData.append('location', editListingForm.location);
+      formData.append('type', editListingForm.type);
+      if (editListingForm.currentImageFile) {
+        formData.append('image', editListingForm.currentImageFile);
+      }
+
+      await api.put('/product', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+
+      setSuccessMessage('Listing updated successfully');
+      setIsEditingListing(false);
+      setEditingListingId(null);
+      setEditListingForm(null);
+
+      // Refresh listings
+      const storedUser = localStorage.getItem('userInfo');
+      if (storedUser) {
+        const parsed = JSON.parse(storedUser);
+        const currentUserId = parsed.id;
+        
+        const listingsRes = await api.get(`/product/seller/${currentUserId}`);
+        const listingsData = listingsRes.data || [];
+        const listingsArray = Array.isArray(listingsData) 
+          ? listingsData 
+          : (listingsData && typeof listingsData === 'object' ? [listingsData] : []);
+        
+        setAllListingsData(listingsArray);
+        
+        const fetchedListings = listingsArray
+          .map(l => ({
+            id: l._id || l.id,
+            crop: l.name || l.cropName,
+            qty: `${l.quantity} ${l.unit || 'kg'}`,
+            status: 'Active Listing',
+            price: l.price
+          }));
+        setListings(fetchedListings);
+      }
+
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (error) {
+      const errorMessage = getHumanReadableError(error) || 'Failed to update listing';
+      setError(errorMessage);
+      console.error('Error updating listing:', error);
+    } finally {
+      setUploadingListing(false);
+    }
   };
 
   const downloadOrderReport = () => {
@@ -134,6 +429,24 @@ export default function Profile() {
     <div className="min-h-screen bg-gray-50 py-10 px-4 sm:px-6 lg:px-8">
       <div className="max-w-5xl mx-auto">
         
+        {/* Error and Success Alerts */}
+        <div className="space-y-4 mb-6">
+          {error && (
+            <AlertBox
+              message={error}
+              type="error"
+              onDismiss={() => setError(null)}
+            />
+          )}
+          {successMessage && (
+            <AlertBox
+              message={successMessage}
+              type="success"
+              onDismiss={() => setSuccessMessage(null)}
+            />
+          )}
+        </div>
+
         {/* Profile Header Card */}
         <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-8 relative">
           <div className="h-32 bg-gradient-to-r from-brand-green to-green-700"></div>
@@ -141,7 +454,7 @@ export default function Profile() {
             <div className="relative">
               <div className="w-32 h-32 rounded-full border-4 border-white bg-gray-100 flex items-center justify-center shadow-lg overflow-hidden">
                 <img 
-                  src="https://images.unsplash.com/photo-1595168051410-a292d37cace7?w=400&auto=format&fit=crop&q=60" 
+                  src={profileImage} 
                   alt="Avatar" 
                   className="w-full h-full object-cover"
                 />
@@ -229,20 +542,33 @@ export default function Profile() {
               </div>
 
               <div className="space-y-4">
-                {listings.map(listing => (
-                  <div key={listing.id} className="border border-gray-100 rounded-2xl p-5 flex items-center justify-between hover:border-brand-green hover:shadow-sm transition-all bg-gray-50">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
-                        <CheckCircle className="w-6 h-6 text-brand-green" />
+                {listings.length > 0 ? (
+                  listings.map(listing => (
+                    <div key={listing.id} className="border border-gray-100 rounded-2xl p-5 flex items-center justify-between hover:border-brand-green hover:shadow-sm transition-all bg-gray-50">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
+                          <CheckCircle className="w-6 h-6 text-brand-green" />
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-gray-900">{listing.crop}</h4>
+                          <p className="text-sm text-gray-500">{listing.qty} • ₹{listing.price}/kg • {listing.status}</p>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="font-bold text-gray-900">{listing.crop}</h4>
-                        <p className="text-sm text-gray-500">{listing.qty} • {listing.status}</p>
+                      <div className="flex gap-2">
+                        <button onClick={() => handleEditListing(listing.id)} className="px-4 py-2 border border-brand-green text-brand-green rounded-lg text-sm font-medium hover:bg-green-50 bg-transparent transition-colors shadow-sm flex items-center gap-2">
+                          <Edit3 className="w-4 h-4" /> Edit
+                        </button>
+                        <button onClick={() => handleDeleteListing(listing.id)} className="px-4 py-2 border border-red-300 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 bg-transparent transition-colors shadow-sm">Delete</button>
                       </div>
                     </div>
-                    <button onClick={() => alert('Listing management coming soon.')} className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-white bg-transparent transition-colors shadow-sm">Manage</button>
+                  ))
+                ) : (
+                  <div className="border border-gray-100 rounded-2xl p-8 text-center">
+                    <ShoppingCart className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                    <p className="text-gray-500 font-medium">No active listings yet</p>
+                    <p className="text-sm text-gray-400 mt-1">Start selling by creating your first listing</p>
                   </div>
-                ))}
+                )}
               </div>
             </div>
 
@@ -300,7 +626,45 @@ export default function Profile() {
           <div className="bg-white rounded-3xl shadow-2xl overflow-hidden max-w-lg w-full p-8 relative">
             <h2 className="text-2xl font-bold text-gray-900 mb-6">Edit Profile</h2>
             
-            <div className="space-y-4">
+            <div className="space-y-6">
+              {/* Profile Picture Upload */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-3">Profile Picture</label>
+                <div className="flex items-center gap-4">
+                  <div className="w-20 h-20 rounded-full border-2 border-gray-300 bg-gray-100 flex items-center justify-center overflow-hidden flex-shrink-0">
+                    <img 
+                      src={profileImage} 
+                      alt="Preview" 
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="cursor-pointer">
+                      <div className="flex items-center gap-2 px-4 py-2 bg-brand-green text-white rounded-lg hover:bg-green-700 transition-colors font-medium text-sm">
+                        <Upload className="w-4 h-4" />
+                        Choose Image
+                      </div>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        className="sr-only"
+                        onChange={handleProfileImageChange}
+                      />
+                    </label>
+                    {profileImageFile && (
+                      <button
+                        onClick={handleUploadProfileImage}
+                        disabled={uploadingImage}
+                        className="mt-2 w-full px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-medium text-sm disabled:opacity-50"
+                      >
+                        {uploadingImage ? 'Uploading...' : 'Save Picture'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Full Name */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
                 <input 
@@ -311,6 +675,7 @@ export default function Profile() {
                 />
               </div>
               
+              {/* Phone Number */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
                 <input 
@@ -321,6 +686,7 @@ export default function Profile() {
                 />
               </div>
 
+              {/* Location */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Location / Address</label>
                 <input 
@@ -334,7 +700,10 @@ export default function Profile() {
 
             <div className="mt-8 flex justify-end gap-3">
               <button 
-                onClick={() => setIsEditing(false)}
+                onClick={() => {
+                  setIsEditing(false);
+                  setProfileImageFile(null);
+                }}
                 className="px-5 py-2 mt-4 text-gray-600 font-medium hover:bg-gray-100 rounded-xl transition-colors"
               >
                 Cancel
@@ -344,6 +713,145 @@ export default function Profile() {
                 className="px-5 py-2 mt-4 bg-brand-green text-white font-medium hover:bg-green-700 rounded-xl transition-colors shadow-sm"
               >
                 Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Listing Modal */}
+      {isEditingListing && editListingForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl shadow-2xl overflow-hidden max-w-lg w-full p-8 relative">
+            <button
+              onClick={() => {
+                setIsEditingListing(false);
+                setEditingListingId(null);
+                setEditListingForm(null);
+              }}
+              className="absolute top-4 right-4 p-2 hover:bg-gray-100 rounded-full transition-colors"
+            >
+              <X className="w-6 h-6 text-gray-500" />
+            </button>
+
+            <h2 className="text-2xl font-bold text-gray-900 mb-6">Edit Listing</h2>
+
+            {error && (
+              <div className="mb-6 bg-red-50 text-red-600 p-3 rounded-lg text-sm font-medium border border-red-100">
+                {error}
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-900 mb-2">
+                  Product Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={editListingForm.name}
+                  onChange={(e) => setEditListingForm({ ...editListingForm, name: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-green focus:border-transparent outline-none"
+                  placeholder="Enter product name"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-900 mb-2">
+                    Quantity (kg) <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    value={editListingForm.quantity}
+                    onChange={(e) => setEditListingForm({ ...editListingForm, quantity: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-green focus:border-transparent outline-none"
+                    placeholder="0"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-900 mb-2">
+                    Price (₹/kg) <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    value={editListingForm.price}
+                    onChange={(e) => setEditListingForm({ ...editListingForm, price: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-green focus:border-transparent outline-none"
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-900 mb-2">
+                  Location <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={editListingForm.location}
+                  onChange={(e) => setEditListingForm({ ...editListingForm, location: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-green focus:border-transparent outline-none"
+                  placeholder="Enter location"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-900 mb-2">
+                  Type <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={editListingForm.type}
+                  onChange={(e) => setEditListingForm({ ...editListingForm, type: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-green focus:border-transparent outline-none"
+                >
+                  <option value="">Select Type</option>
+                  <option value="Vegetables">Vegetables</option>
+                  <option value="Fruits">Fruits</option>
+                  <option value="Grains">Grains</option>
+                  <option value="Pulses">Pulses</option>
+                  <option value="Spices">Spices</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-900 mb-2">Product Image</label>
+                <div className="flex items-center gap-4">
+                  {editListingForm.imageUrl && (
+                    <img
+                      src={editListingForm.imageUrl}
+                      alt="Product"
+                      className="w-16 h-16 rounded-lg object-cover"
+                    />
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleEditListingImageChange}
+                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-green focus:border-transparent outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setIsEditingListing(false);
+                  setEditingListingId(null);
+                  setEditListingForm(null);
+                }}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-900 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUpdateListing}
+                disabled={uploadingListing}
+                className="flex-1 px-4 py-2 bg-brand-green text-white font-medium rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {uploadingListing ? 'Updating...' : 'Update Listing'}
               </button>
             </div>
           </div>

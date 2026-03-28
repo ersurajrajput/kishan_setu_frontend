@@ -10,6 +10,8 @@ import {
   ShoppingBag,
 } from "lucide-react";
 import api from "../services/api";
+import AlertBox from "../components/AlertBox";
+import { getHumanReadableError, getContextualError } from "../utils/errorHandler";
 
 const CATEGORIES = ["All", "Grains", "Vegetables", "Fruits", "Pulses"];
 
@@ -19,12 +21,16 @@ export default function Marketplace() {
   const [crops, setCrops] = useState([]);
   const [loading, setLoading] = useState(true);
   const [quantities, setQuantities] = useState({});
+  const [error, setError] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
+  const [orderingCropId, setOrderingCropId] = useState(null);
 
   useEffect(() => {
     const fetchCrops = async () => {
+      setLoading(true);
+      setError(null);
       try {
         const { data } = await api.get("/product");
-        console.log("Raw product data:", data); // Log entire response
 
         // Map backend data to frontend expected shape
         const safeValue = (value, fallback = "NA") => {
@@ -33,12 +39,12 @@ export default function Marketplace() {
             : value;
         };
 
-        const mappedCrops = data.map((c) => ({
+        const mappedCrops = (Array.isArray(data) ? data : []).map((c) => ({
           id: safeValue(c.id, ""),
           name: safeValue(c.name),
           farmer: safeValue(c.sellerName, "Unknown Seller"),
-          phone: "Contact via app", // Backend doesn't provide phone endpoint - ask backend team to add it
-          sellerId: c.id,
+          phone: "Contact via app",
+          sellerId: safeValue(c.sellerId || c.id, ""),
           location: safeValue(c.location),
           price: safeValue(c.price, 0),
           quantity: safeValue(c.quantity, 0),
@@ -52,8 +58,9 @@ export default function Marketplace() {
 
         setCrops(mappedCrops);
       } catch (error) {
-        console.error("Error fetching crops:", error);
-        setCrops([]); // Show empty state instead of dummy data
+        const errorMessage = getContextualError('marketplace', error);
+        setError(errorMessage);
+        setCrops([]);
       } finally {
         setLoading(false);
       }
@@ -65,21 +72,26 @@ export default function Marketplace() {
     try {
       const orderQuantity = quantities[cropId] || 1;
       if (orderQuantity <= 0) {
-        alert("Please enter a valid quantity");
+        setError("Please enter a valid quantity (greater than 0).");
         return;
       }
+
+      setOrderingCropId(cropId);
       await api.post("/orders", {
         cropId: cropId,
         quantity: orderQuantity.toString(),
       });
-      alert("Order placed successfully! The farmer will contact you soon.");
-      // Reset quantity after successful order
+      
+      setSuccessMessage("Order placed successfully! The farmer will contact you soon.");
       setQuantities({ ...quantities, [cropId]: 1 });
+      
+      // Clear success message after 4 seconds
+      setTimeout(() => setSuccessMessage(null), 4000);
     } catch (error) {
-      alert(
-        error.response?.data?.message ||
-          "Error placing order. Please try again.",
-      );
+      const errorMessage = getHumanReadableError(error);
+      setError(errorMessage);
+    } finally {
+      setOrderingCropId(null);
     }
   };
 
@@ -95,6 +107,24 @@ export default function Marketplace() {
   return (
     <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
       <div className="max-w-7xl mx-auto">
+        {/* Error and Success Alerts */}
+        <div className="mb-6 space-y-4">
+          {error && (
+            <AlertBox
+              message={error}
+              type="error"
+              onDismiss={() => setError(null)}
+            />
+          )}
+          {successMessage && (
+            <AlertBox
+              message={successMessage}
+              type="success"
+              onDismiss={() => setSuccessMessage(null)}
+            />
+          )}
+        </div>
+
         {/* Header & Search */}
         <div className="flex flex-col md:flex-row justify-between items-center mb-10 gap-6">
           <div>

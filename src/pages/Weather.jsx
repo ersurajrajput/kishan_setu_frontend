@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Cloud, CloudRain, Sun, Wind, Droplets, Thermometer, AlertTriangle, MapPin, Navigation, Search, Sprout, TrendingUp, Loader2 } from 'lucide-react';
 import api from '../services/api';
+import AlertBox from '../components/AlertBox';
+import { getHumanReadableError, getContextualError } from '../utils/errorHandler';
 
 export default function WeatherDashboard() {
   const [weatherData, setWeatherData] = useState(null);
@@ -13,6 +15,8 @@ export default function WeatherDashboard() {
   const [profitableCrops, setProfitableCrops] = useState(null);
   const [cropsLoading, setCropsLoading] = useState(false);
   const [showCrops, setShowCrops] = useState(false);
+  const [error, setError] = useState(null);
+  const [cropsError, setCropsError] = useState(null);
 
   // Load saved location on mount
   useEffect(() => {
@@ -29,12 +33,15 @@ export default function WeatherDashboard() {
 
   const fetchWeather = async (city) => {
     setLoading(true);
+    setError(null);
     try {
       const { data } = await api.get(`/weather?city=${encodeURIComponent(city)}`);
       setWeatherData(data);
       localStorage.setItem('weatherLocation', data.location || city);
       setLocation(data.location || city);
     } catch (error) {
+      const errorMessage = getContextualError('weather', error);
+      setError(errorMessage);
       console.error("Error fetching weather:", error);
     } finally {
       setLoading(false);
@@ -44,11 +51,12 @@ export default function WeatherDashboard() {
   // Get current location using Geolocation API
   const getCurrentLocation = () => {
     if (!navigator.geolocation) {
-      alert('Geolocation is not supported by your browser');
+      setError('Geolocation is not supported by your browser. Please search for a location instead.');
       return;
     }
 
     setLocationLoading(true);
+    setError(null);
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         try {
@@ -58,15 +66,16 @@ export default function WeatherDashboard() {
           setLocation(data.location);
           setShowLocationInput(false);
         } catch (error) {
+          const errorMessage = getContextualError('weather', error);
+          setError(errorMessage);
           console.error("Error fetching weather by coords:", error);
-          alert('Failed to fetch weather for your location');
         } finally {
           setLocationLoading(false);
         }
       },
       (error) => {
         console.error("Geolocation error:", error);
-        alert('Unable to get your location. Please check your browser permissions.');
+        setError('Unable to get your location. Please check your browser permissions or search for a location.');
         setLocationLoading(false);
       }
     );
@@ -84,6 +93,7 @@ export default function WeatherDashboard() {
   // Fetch profitable crops based on weather
   const fetchProfitableCrops = async () => {
     setCropsLoading(true);
+    setCropsError(null);
     setShowCrops(true);
     try {
       const payload = {
@@ -96,6 +106,8 @@ export default function WeatherDashboard() {
       const { data } = await api.post('/ai/recommend-by-weather', payload);
       setProfitableCrops(data.recommendations);
     } catch (error) {
+      const errorMessage = getContextualError('recommendation', error);
+      setCropsError(errorMessage);
       console.error("Error fetching profitable crops:", error);
     } finally {
       setCropsLoading(false);
@@ -125,6 +137,16 @@ export default function WeatherDashboard() {
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-6xl mx-auto">
+        {/* Error Alert */}
+        {error && (
+          <div className="mb-6">
+            <AlertBox
+              message={error}
+              type="error"
+              onDismiss={() => setError(null)}
+            />
+          </div>
+        )}
         
         {/* Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
@@ -347,6 +369,16 @@ export default function WeatherDashboard() {
                 )}
               </button>
             </div>
+
+            {cropsError && (
+              <div className="mb-6">
+                <AlertBox
+                  message={cropsError}
+                  type="error"
+                  onDismiss={() => setCropsError(null)}
+                />
+              </div>
+            )}
 
             <AnimatePresence>
               {showCrops && (

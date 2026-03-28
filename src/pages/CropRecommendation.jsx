@@ -1,23 +1,104 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sprout, MapPin, Droplets, Sun, Sparkles, TrendingUp, ArrowRight, Activity } from 'lucide-react';
+import { Sprout, MapPin, Droplets, Sun, Sparkles, TrendingUp, ArrowRight, Activity, AlertCircle } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import api from '../services/api';
+import AlertBox from '../components/AlertBox';
+import { getHumanReadableError, getContextualError } from '../utils/errorHandler';
+
+// Human-readable error messages
+const ERROR_MESSAGES = {
+  'location': {
+    required: 'Please enter your region/state to get recommendations',
+    invalid: 'Location must be a valid region name (e.g., Punjab, Madhya Pradesh)'
+  },
+  'soilType': {
+    required: 'Please select a soil type for accurate recommendations',
+    invalid: 'Please select one of the available soil types'
+  },
+  'season': {
+    required: 'Please select the upcoming season',
+    invalid: 'Please select a valid season (Kharif, Rabi, or Zaid)'
+  },
+  'water': {
+    required: 'Please indicate your water availability',
+    invalid: 'Please select a valid water availability level'
+  },
+  'upcomingSeason': {
+    required: 'Please specify the upcoming season',
+    invalid: 'Invalid season selected'
+  },
+  'waterAvailability': {
+    required: 'Please indicate water availability',
+    invalid: 'Invalid water availability level'
+  }
+};
+
+const getFieldError = (fieldName, errorType = 'required') => {
+  return ERROR_MESSAGES[fieldName]?.[errorType] || 'This field is required';
+};
 
 export default function CropRecommendation() {
-  const { register, handleSubmit } = useForm();
+  const { register, handleSubmit, formState: { errors }, reset } = useForm({
+    mode: 'onBlur',
+    defaultValues: {
+      region: '',
+      soilType: '',
+      upcomingSeason: '',
+      waterAvailability: ''
+    }
+  });
   const [recommendations, setRecommendations] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [apiError, setApiError] = useState(null);
 
   const onSubmit = async (data) => {
     setLoading(true);
+    setError(null);
+    setApiError(null);
     setRecommendations(null);
     
     try {
-      const response = await api.post('/ai/recommend', data);
+      // Validate all fields are filled
+      if (!data.region?.trim()) {
+        setError(getFieldError('location', 'required'));
+        setLoading(false);
+        return;
+      }
+      if (!data.soilType) {
+        setError(getFieldError('soilType', 'required'));
+        setLoading(false);
+        return;
+      }
+      if (!data.upcomingSeason) {
+        setError(getFieldError('upcomingSeason', 'required'));
+        setLoading(false);
+        return;
+      }
+      if (!data.waterAvailability) {
+        setError(getFieldError('waterAvailability', 'required'));
+        setLoading(false);
+        return;
+      }
+
+      // Prepare payload matching backend expectations
+      const payload = {
+        region: data.region,
+        soilType: data.soilType,
+        upcomingSeason: data.upcomingSeason,
+        waterAvailability: data.waterAvailability
+      };
+
+      const response = await api.post('/ai/recommend', payload);
       
-      // Map icons back onto response data
-      const mappedRecs = response.data.recommendations.map(rec => {
+      // Validate response
+      if (!response.data || !response.data.crops) {
+        throw new Error('Invalid response from server');
+      }
+
+      // Map icons onto response data
+      const mappedRecs = response.data.crops.map(rec => {
         let icon = <Sparkles className="w-6 h-6 text-brand-green" />;
         let color = 'bg-green-50 border-green-200';
         
@@ -33,9 +114,28 @@ export default function CropRecommendation() {
       });
       
       setRecommendations(mappedRecs);
+      setApiError(null);
     } catch (error) {
       console.error("Error getting recommendation:", error);
-      alert('Failed to get recommendations. Please try again.');
+      
+      // Handle different error scenarios with human-readable messages
+      let errorMessage = 'Unable to get recommendations. Please try again.';
+      
+      if (error.response?.status === 400) {
+        errorMessage = 'Invalid input. Please check your farm details and try again.';
+        if (error.response?.data?.message) {
+          errorMessage = error.response.data.message;
+        }
+      } else if (error.response?.status === 404) {
+        errorMessage = 'Recommendation service is currently unavailable. Please try again later.';
+      } else if (error.response?.status === 500) {
+        errorMessage = 'Server error while processing your request. Our team has been notified. Please try again later.';
+      } else if (!error.response) {
+        errorMessage = 'Network error. Please check your internet connection and try again.';
+      }
+      
+      setApiError(errorMessage);
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -58,68 +158,108 @@ export default function CropRecommendation() {
           {/* Input Form */}
           <div className="md:col-span-5 bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-max sticky top-24">
             <h3 className="text-xl font-bold text-gray-900 mb-6 border-b pb-4">Farm Details</h3>
+            
+            {error && (
+              <div className="mb-6">
+                <AlertBox
+                  message={error}
+                  type="error"
+                  onDismiss={() => setError(null)}
+                />
+              </div>
+            )}
+            
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
               
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">State / Region</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Region / State <span className="text-red-500">*</span>
+                </label>
                 <div className="relative rounded-md shadow-sm">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <MapPin className="h-5 w-5 text-gray-400" />
                   </div>
                   <input
-                    {...register("location", { required: true })}
-                    placeholder="e.g. Punjab, Madhya Pradesh"
-                    className="block w-full pl-10 border-gray-300 rounded-lg focus:ring-brand-green focus:border-brand-green py-3 border bg-gray-50 focus:bg-white"
+                    {...register("region", { 
+                      required: true,
+                      validate: (value) => value?.trim().length > 0 || true
+                    })}
+                    placeholder="e.g. Punjab, Madhya Pradesh, Karnataka"
+                    className={`block w-full pl-10 border rounded-lg focus:ring-brand-green focus:border-brand-green py-3 border-gray-300 bg-gray-50 focus:bg-white ${errors.region ? 'border-red-500 focus:ring-red-500' : ''}`}
                   />
                 </div>
+                {errors.region && (
+                  <span className="text-red-500 text-xs mt-1 block flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    {getFieldError('location', 'required')}
+                  </span>
+                )}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Soil Type</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Soil Type <span className="text-red-500">*</span>
+                </label>
                 <div className="relative rounded-md shadow-sm">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <Sprout className="h-5 w-5 text-gray-400" />
                   </div>
                   <select
                     {...register("soilType", { required: true })}
-                    className="block w-full pl-10 border-gray-300 rounded-lg focus:ring-brand-green focus:border-brand-green py-3 border bg-gray-50 focus:bg-white"
+                    className={`block w-full pl-10 border rounded-lg focus:ring-brand-green focus:border-brand-green py-3 border-gray-300 bg-gray-50 focus:bg-white ${errors.soilType ? 'border-red-500 focus:ring-red-500' : ''}`}
                   >
                     <option value="">Select Soil Type</option>
+                    <option value="black soil">Black Soil</option>
                     <option value="alluvial">Alluvial</option>
-                    <option value="black">Black Soil</option>
                     <option value="red">Red Soil</option>
                     <option value="laterite">Laterite</option>
                   </select>
                 </div>
+                {errors.soilType && (
+                  <span className="text-red-500 text-xs mt-1 block flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    {getFieldError('soilType', 'required')}
+                  </span>
+                )}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Upcoming Season</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Upcoming Season <span className="text-red-500">*</span>
+                </label>
                 <div className="relative rounded-md shadow-sm">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <Sun className="h-5 w-5 text-gray-400" />
                   </div>
                   <select
-                    {...register("season", { required: true })}
-                    className="block w-full pl-10 border-gray-300 rounded-lg focus:ring-brand-green focus:border-brand-green py-3 border bg-gray-50 focus:bg-white"
+                    {...register("upcomingSeason", { required: true })}
+                    className={`block w-full pl-10 border rounded-lg focus:ring-brand-green focus:border-brand-green py-3 border-gray-300 bg-gray-50 focus:bg-white ${errors.upcomingSeason ? 'border-red-500 focus:ring-red-500' : ''}`}
                   >
                     <option value="">Select Season</option>
-                    <option value="kharif">Kharif (Monsoon)</option>
-                    <option value="rabi">Rabi (Winter)</option>
-                    <option value="zaid">Zaid (Summer)</option>
+                    <option value="Kharif (Monsoon)">Kharif (Monsoon)</option>
+                    <option value="Rabi (Winter)">Rabi (Winter)</option>
+                    <option value="Zaid (Summer)">Zaid (Summer)</option>
                   </select>
                 </div>
+                {errors.upcomingSeason && (
+                  <span className="text-red-500 text-xs mt-1 block flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    {getFieldError('upcomingSeason', 'required')}
+                  </span>
+                )}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Water Availability</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Water Availability <span className="text-red-500">*</span>
+                </label>
                 <div className="relative rounded-md shadow-sm">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <Droplets className="h-5 w-5 text-gray-400" />
                   </div>
                   <select
-                    {...register("water", { required: true })}
-                    className="block w-full pl-10 border-gray-300 rounded-lg focus:ring-brand-green focus:border-brand-green py-3 border bg-gray-50 focus:bg-white"
+                    {...register("waterAvailability", { required: true })}
+                    className={`block w-full pl-10 border rounded-lg focus:ring-brand-green focus:border-brand-green py-3 border-gray-300 bg-gray-50 focus:bg-white ${errors.waterAvailability ? 'border-red-500 focus:ring-red-500' : ''}`}
                   >
                     <option value="">Select Availability</option>
                     <option value="high">High (Canal/Tubewell)</option>
@@ -127,6 +267,12 @@ export default function CropRecommendation() {
                     <option value="low">Low (Dry region)</option>
                   </select>
                 </div>
+                {errors.waterAvailability && (
+                  <span className="text-red-500 text-xs mt-1 block flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    {getFieldError('waterAvailability', 'required')}
+                  </span>
+                )}
               </div>
 
               <div className="pt-2">

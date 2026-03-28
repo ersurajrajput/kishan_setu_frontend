@@ -1,19 +1,20 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Leaf, Globe, User, Mail, Lock, Briefcase, Sprout, AlertCircle } from 'lucide-react';
+import { Leaf, Globe, User, Mail, Lock, Briefcase, Sprout, AlertCircle, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import authService from '../services/authService';
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
   const [role, setRole] = useState('farmer');
+  const { error, clearError, login, register } = useAuth();
 
   // Form State
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
 
   const navigate = useNavigate();
 
@@ -26,24 +27,22 @@ export default function AuthPage() {
 const handleSubmit = async (e) => {
   e.preventDefault();
   setLoading(true);
-  setError(null);
 
   try {
     let userData;
     if (isLogin) {
-      userData = await authService.login(email, password);
+      userData = await login(email, password);
     } else {
       // Validate form before signup
       if (!name.trim()) {
         throw new Error('Full name is required');
       }
-      userData = await authService.register(name, email, password, role);
+      userData = await register(name, email, password, role);
     }
     
     // Redirect based on role
     redirectByRole(userData.role);
   } catch (err) {
-    setError(err.message || 'An error occurred. Please try again.');
     console.error('Auth error:', err);
   } finally {
     setLoading(false);
@@ -69,7 +68,7 @@ const handleSubmit = async (e) => {
           {isLogin ? "Don't have an account? " : 'Already have an account? '}
           <button
             type="button"
-            onClick={() => { setIsLogin(!isLogin); setError(null); }}
+            onClick={() => { setIsLogin(!isLogin); clearError(); }}
             className="font-medium text-brand-green hover:text-green-700 transition-colors"
           >
             {isLogin ? 'Register now' : 'Log in instead'}
@@ -94,9 +93,24 @@ const handleSubmit = async (e) => {
           <form className="space-y-6 mt-4" onSubmit={handleSubmit}>
 
             {error && (
-              <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm font-medium border border-red-100">
-                {error}
-              </div>
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3"
+              >
+                <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-red-800">{error}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={clearError}
+                  className="text-red-600 hover:text-red-800 transition-colors"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </motion.div>
             )}
 
             {/* Name — Register only */}

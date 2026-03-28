@@ -1,294 +1,476 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sprout, MapPin, Droplets, Sun, Sparkles, TrendingUp, ArrowRight, Activity, AlertCircle } from 'lucide-react';
+import {
+  Sprout, MapPin, Droplets, Sun, Sparkles,
+  ArrowRight, Activity, AlertCircle,
+  WifiOff, RefreshCw, Leaf, Wheat, Apple
+} from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import api from '../services/api';
-import AlertBox from '../components/AlertBox';
-import { getHumanReadableError, getContextualError } from '../utils/errorHandler';
 
-// Human-readable error messages
-const ERROR_MESSAGES = {
-  'location': {
-    required: 'Please enter your region/state to get recommendations',
-    invalid: 'Location must be a valid region name (e.g., Punjab, Madhya Pradesh)'
-  },
-  'soilType': {
-    required: 'Please select a soil type for accurate recommendations',
-    invalid: 'Please select one of the available soil types'
-  },
-  'season': {
-    required: 'Please select the upcoming season',
-    invalid: 'Please select a valid season (Kharif, Rabi, or Zaid)'
-  },
-  'water': {
-    required: 'Please indicate your water availability',
-    invalid: 'Please select a valid water availability level'
-  },
-  'upcomingSeason': {
-    required: 'Please specify the upcoming season',
-    invalid: 'Invalid season selected'
-  },
-  'waterAvailability': {
-    required: 'Please indicate water availability',
-    invalid: 'Invalid water availability level'
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const SOIL_TYPES = [
+  { value: 'black soil', label: 'Black Soil' },
+  { value: 'alluvial',   label: 'Alluvial' },
+  { value: 'red',        label: 'Red Soil' },
+  { value: 'laterite',   label: 'Laterite' },
+];
+
+const SEASONS = [
+  { value: 'Kharif (Monsoon)', label: 'Kharif (Monsoon)' },
+  { value: 'Rabi (Winter)',    label: 'Rabi (Winter)' },
+  { value: 'Zaid (Summer)',    label: 'Zaid (Summer)' },
+];
+
+const WATER_LEVELS = [
+  { value: 'high',   label: 'High (Canal / Tubewell)' },
+  { value: 'medium', label: 'Medium (Monsoon dependent)' },
+  { value: 'low',    label: 'Low (Dry region)' },
+];
+
+const HTTP_ERRORS = {
+  400: 'The information you entered seems incorrect. Please review and try again.',
+  401: 'You are not authorised to use this feature. Please log in again.',
+  403: 'Access denied. Please contact support if this continues.',
+  404: 'The recommendation service could not be reached. Please try again later.',
+  408: 'The request took too long. Please check your connection and retry.',
+  429: 'Too many requests. Please wait a moment before trying again.',
+  500: 'Our server ran into a problem. Please try again in a few minutes.',
+  502: 'Service is temporarily unavailable. Please try again later.',
+  503: 'The recommendation engine is under maintenance. Please check back soon.',
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Handles your backend shape: { crops: [ { name, description } ] }
+ * Also handles other common shapes just in case.
+ */
+const normaliseCrops = (data) => {
+  if (Array.isArray(data?.crops))       return data.crops;        // ✅ your shape
+  if (Array.isArray(data?.data?.crops)) return data.data.crops;
+  if (Array.isArray(data))              return data;
+  if (Array.isArray(data?.data))        return data.data;
+  return null;
+};
+
+const buildErrorMessage = (err) => {
+  if (!err.response) {
+    if (err.code === 'ECONNABORTED' || err.message?.toLowerCase().includes('timeout'))
+      return 'The request timed out. Please check your internet connection and try again.';
+    return 'Network error — please check your internet connection and try again.';
   }
+  const status = err.response?.status;
+  const apiMsg = err.response?.data?.message || err.response?.data?.error;
+  if (apiMsg && typeof apiMsg === 'string' && apiMsg.length < 200 && !apiMsg.includes('\n'))
+    return apiMsg;
+  return HTTP_ERRORS[status] || `Unexpected error (${status}). Please try again.`;
 };
 
-const getFieldError = (fieldName, errorType = 'required') => {
-  return ERROR_MESSAGES[fieldName]?.[errorType] || 'This field is required';
+const getCropStyle = (name = '') => {
+  const n = name.toLowerCase();
+  if (n.includes('wheat') || n.includes('mustard') || n.includes('maize') || n.includes('corn'))
+    return { color: 'bg-amber-50 border-amber-200', iconColor: 'text-amber-500', Icon: Wheat };
+  if (n.includes('potato') || n.includes('tomato') || n.includes('onion') || n.includes('vegetable'))
+    return { color: 'bg-orange-50 border-orange-200', iconColor: 'text-orange-500', Icon: Apple };
+  if (n.includes('rice') || n.includes('paddy') || n.includes('sugarcane') || n.includes('cotton'))
+    return { color: 'bg-emerald-50 border-emerald-200', iconColor: 'text-emerald-600', Icon: Leaf };
+  return { color: 'bg-green-50 border-green-200', iconColor: 'text-green-600', Icon: Sprout };
 };
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function FieldError({ message }) {
+  return (
+    <motion.p
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: 'auto' }}
+      exit={{ opacity: 0, height: 0 }}
+      className="text-red-500 text-xs mt-1 flex items-center gap-1"
+      role="alert"
+    >
+      <AlertCircle className="w-3 h-3 shrink-0" />
+      {message}
+    </motion.p>
+  );
+}
+
+function ErrorBanner({ message, onRetry, onDismiss }) {
+  const isNetwork =
+    message?.toLowerCase().includes('network') ||
+    message?.toLowerCase().includes('connection') ||
+    message?.toLowerCase().includes('internet') ||
+    message?.toLowerCase().includes('timeout');
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -8 }}
+      className="flex flex-col gap-3 bg-red-50 border border-red-200 rounded-xl p-4 text-sm"
+      role="alert"
+      aria-live="assertive"
+    >
+      <div className="flex items-start gap-3">
+        {isNetwork
+          ? <WifiOff className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
+          : <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
+        }
+        <div className="flex-1">
+          <p className="font-semibold text-red-800">Something went wrong</p>
+          <p className="text-red-700 mt-0.5">{message}</p>
+        </div>
+        <button
+          onClick={onDismiss}
+          aria-label="Dismiss error"
+          className="text-red-400 hover:text-red-600 transition-colors text-base leading-none"
+        >
+          ✕
+        </button>
+      </div>
+      {onRetry && (
+        <button
+          onClick={onRetry}
+          className="self-start flex items-center gap-1.5 text-red-700 font-semibold hover:text-red-900 transition-colors"
+        >
+          <RefreshCw className="w-3.5 h-3.5" /> Try again
+        </button>
+      )}
+    </motion.div>
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <div className="p-6 rounded-2xl border border-gray-200 bg-white animate-pulse space-y-4">
+      <div className="flex items-center gap-4">
+        <div className="w-12 h-12 rounded-xl bg-gray-200" />
+        <div className="h-6 w-40 rounded bg-gray-200" />
+      </div>
+      <div className="h-16 rounded-lg bg-gray-100" />
+      <div className="h-8 w-36 rounded-lg bg-gray-200" />
+    </div>
+  );
+}
+
+function CropCard({ rec, index }) {
+  const { color, iconColor, Icon } = getCropStyle(rec.name);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: 50 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: index * 0.15, type: 'spring', stiffness: 120 }}
+      whileHover={{ scale: 1.015 }}
+      className={`p-6 rounded-2xl border ${color} relative overflow-hidden shadow-sm`}
+    >
+      {/* Optional match badge — only shown if API sends it */}
+      {rec.match != null && (
+        <div className="absolute top-4 right-4">
+          <span className="bg-white/90 backdrop-blur font-bold text-xs px-2.5 py-1 rounded-full shadow-sm text-gray-700">
+            {rec.match}% Match
+          </span>
+        </div>
+      )}
+
+      {/* Icon + Name */}
+      <div className="flex items-center gap-4 mb-4">
+        <div className="bg-white p-3 rounded-xl shadow-sm">
+          <Icon className={`w-6 h-6 ${iconColor}`} />
+        </div>
+        <h3 className="text-xl font-bold text-gray-900">{rec.name}</h3>
+      </div>
+
+      {/* Description — always present in your API response */}
+      {rec.description && (
+        <div className="bg-white/70 backdrop-blur-sm p-4 rounded-xl">
+          <p className="text-xs text-gray-500 uppercase font-semibold tracking-wide mb-1">
+            About this crop
+          </p>
+          <p className="text-gray-800 text-sm leading-relaxed">{rec.description}</p>
+        </div>
+      )}
+
+      {/* Optional extra fields — only shown if API sends them in future */}
+      {(rec.yield || rec.profit || rec.demand) && (
+        <div className="grid grid-cols-2 gap-3 mt-4">
+          {rec.yield && (
+            <div className="bg-white/70 p-3 rounded-xl">
+              <p className="text-xs text-gray-500 uppercase font-semibold">Expected Yield</p>
+              <p className="font-bold text-gray-900 mt-1 text-sm">{rec.yield}</p>
+            </div>
+          )}
+          {rec.profit && (
+            <div className="bg-white/70 p-3 rounded-xl">
+              <p className="text-xs text-gray-500 uppercase font-semibold">Profit Potential</p>
+              <p className={`font-bold mt-1 text-sm ${iconColor}`}>{rec.profit}</p>
+            </div>
+          )}
+          {rec.demand && (
+            <div className="col-span-2 bg-white/70 p-3 rounded-xl">
+              <p className="text-xs text-gray-500 uppercase font-semibold">Market Demand</p>
+              <p className="font-bold text-gray-900 mt-1 text-sm">{rec.demand}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      <button className="mt-5 flex items-center gap-2 text-sm font-semibold text-gray-800 bg-white px-4 py-2 rounded-lg hover:bg-gray-50 shadow-sm transition-colors border border-gray-200">
+        View Detailed Guide <ArrowRight className="w-4 h-4" />
+      </button>
+    </motion.div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function CropRecommendation() {
-  const { register, handleSubmit, formState: { errors }, reset } = useForm({
+  const {
+    register,
+    handleSubmit,
+    getValues,
+    formState: { errors },
+  } = useForm({
     mode: 'onBlur',
     defaultValues: {
       region: '',
       soilType: '',
       upcomingSeason: '',
-      waterAvailability: ''
-    }
+      waterAvailability: '',
+    },
   });
+
   const [recommendations, setRecommendations] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [apiError, setApiError] = useState(null);
+  const [loading, setLoading]                 = useState(false);
+  const [submitError, setSubmitError]         = useState(null);
 
   const onSubmit = async (data) => {
     setLoading(true);
-    setError(null);
-    setApiError(null);
+    setSubmitError(null);
     setRecommendations(null);
-    
-    try {
-      // Validate all fields are filled
-      if (!data.region?.trim()) {
-        setError(getFieldError('location', 'required'));
-        setLoading(false);
-        return;
-      }
-      if (!data.soilType) {
-        setError(getFieldError('soilType', 'required'));
-        setLoading(false);
-        return;
-      }
-      if (!data.upcomingSeason) {
-        setError(getFieldError('upcomingSeason', 'required'));
-        setLoading(false);
-        return;
-      }
-      if (!data.waterAvailability) {
-        setError(getFieldError('waterAvailability', 'required'));
-        setLoading(false);
-        return;
-      }
 
-      // Prepare payload matching backend expectations
+    try {
       const payload = {
-        region: data.region,
-        soilType: data.soilType,
-        upcomingSeason: data.upcomingSeason,
-        waterAvailability: data.waterAvailability
+        region:            data.region.trim(),
+        soilType:          data.soilType.trim(),
+        upComingSeason:    data.upcomingSeason.trim(),
+        waterAvailability: data.waterAvailability.trim(),
       };
 
-      const response = await api.post('/ai/recommend', payload);
-      
-      // Validate response
-      if (!response.data || !response.data.crops) {
-        throw new Error('Invalid response from server');
+      const response = await api.post('/crop-recommand', payload);
+
+      // Remove these two lines once you've confirmed everything works
+      console.log('API status:', response.status);
+      console.log('API data:', JSON.stringify(response.data, null, 2));
+
+      const crops = normaliseCrops(response.data);
+
+      if (!crops || crops.length === 0) {
+        setSubmitError(
+          'No crop recommendations were found for your inputs. Try changing the region, soil type, or season.'
+        );
+        return;
       }
 
-      // Map icons onto response data
-      const mappedRecs = response.data.crops.map(rec => {
-        let icon = <Sparkles className="w-6 h-6 text-brand-green" />;
-        let color = 'bg-green-50 border-green-200';
-        
-        if (rec.name.includes('Wheat') || rec.name.includes('Mustard')) {
-           icon = <Sun className="w-6 h-6 text-brand-yellow" />;
-           color = 'bg-yellow-50 border-yellow-200';
-        } else if (rec.name.includes('Potato') || rec.name.includes('Tomato')) {
-           icon = <Sprout className="w-6 h-6 text-brand-brown" />;
-           color = 'bg-orange-50 border-orange-200';
-        }
-
-        return { ...rec, icon, color };
-      });
-      
-      setRecommendations(mappedRecs);
-      setApiError(null);
-    } catch (error) {
-      console.error("Error getting recommendation:", error);
-      
-      // Handle different error scenarios with human-readable messages
-      let errorMessage = 'Unable to get recommendations. Please try again.';
-      
-      if (error.response?.status === 400) {
-        errorMessage = 'Invalid input. Please check your farm details and try again.';
-        if (error.response?.data?.message) {
-          errorMessage = error.response.data.message;
-        }
-      } else if (error.response?.status === 404) {
-        errorMessage = 'Recommendation service is currently unavailable. Please try again later.';
-      } else if (error.response?.status === 500) {
-        errorMessage = 'Server error while processing your request. Our team has been notified. Please try again later.';
-      } else if (!error.response) {
-        errorMessage = 'Network error. Please check your internet connection and try again.';
-      }
-      
-      setApiError(errorMessage);
-      setError(errorMessage);
+      setRecommendations(crops);
+    } catch (err) {
+      console.error('[CropRecommendation] error:', err);
+      setSubmitError(buildErrorMessage(err));
     } finally {
       setLoading(false);
     }
   };
 
+  // Retry reuses the current form values without user having to re-fill
+  const handleRetry = () => onSubmit(getValues());
+
+  // ─────────────────────────────────────────────────────────────────────────────
+
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-5xl mx-auto">
+
+        {/* Header */}
         <div className="text-center mb-10">
           <h2 className="text-3xl md:text-4xl font-heading font-extrabold text-gray-900 flex items-center justify-center gap-3">
             <Activity className="h-8 w-8 text-brand-green" />
             Smart Crop Recommendation
           </h2>
           <p className="mt-4 text-lg text-gray-600 max-w-2xl mx-auto">
-            Our AI analyzes historical data, weather forecasts, and market trends to suggest the most profitable crops for your specific farm conditions.
+            Our AI analyses historical data, weather forecasts, and market trends to suggest
+            the most profitable crops for your specific farm conditions.
           </p>
         </div>
 
         <div className="grid md:grid-cols-12 gap-8">
-          {/* Input Form */}
+
+          {/* ── Form panel ─────────────────────────────────────────────────── */}
           <div className="md:col-span-5 bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-max sticky top-24">
             <h3 className="text-xl font-bold text-gray-900 mb-6 border-b pb-4">Farm Details</h3>
-            
-            {error && (
-              <div className="mb-6">
-                <AlertBox
-                  message={error}
-                  type="error"
-                  onDismiss={() => setError(null)}
-                />
-              </div>
-            )}
-            
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Region / State <span className="text-red-500">*</span>
-                </label>
-                <div className="relative rounded-md shadow-sm">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <MapPin className="h-5 w-5 text-gray-400" />
-                  </div>
-                  <input
-                    {...register("region", { 
-                      required: true,
-                      validate: (value) => value?.trim().length > 0 || true
-                    })}
-                    placeholder="e.g. Punjab, Madhya Pradesh, Karnataka"
-                    className={`block w-full pl-10 border rounded-lg focus:ring-brand-green focus:border-brand-green py-3 border-gray-300 bg-gray-50 focus:bg-white ${errors.region ? 'border-red-500 focus:ring-red-500' : ''}`}
+
+            <AnimatePresence>
+              {submitError && !loading && (
+                <div className="mb-5">
+                  <ErrorBanner
+                    message={submitError}
+                    onRetry={handleRetry}
+                    onDismiss={() => setSubmitError(null)}
                   />
                 </div>
-                {errors.region && (
-                  <span className="text-red-500 text-xs mt-1 block flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" />
-                    {getFieldError('location', 'required')}
-                  </span>
-                )}
-              </div>
+              )}
+            </AnimatePresence>
 
+            <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-5">
+
+              {/* Region */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Soil Type <span className="text-red-500">*</span>
+                <label htmlFor="region" className="block text-sm font-medium text-gray-700 mb-1">
+                  Region / State <span className="text-red-500" aria-hidden="true">*</span>
                 </label>
                 <div className="relative rounded-md shadow-sm">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <MapPin className="h-5 w-5 text-gray-400" />
+                  </span>
+                  <input
+                    id="region"
+                    {...register('region', {
+                      required: 'Please enter your region or state.',
+                      validate: (v) =>
+                        v.trim().length >= 2 || 'Please enter at least 2 characters.',
+                    })}
+                    placeholder="e.g. Punjab, Madhya Pradesh, Karnataka"
+                    aria-invalid={!!errors.region}
+                    className={`block w-full pl-10 py-3 border rounded-lg bg-gray-50 focus:bg-white
+                      transition-colors focus:outline-none focus:ring-2
+                      ${errors.region
+                        ? 'border-red-400 focus:ring-red-300'
+                        : 'border-gray-300 focus:ring-brand-green focus:border-brand-green'
+                      }`}
+                  />
+                </div>
+                <AnimatePresence>
+                  {errors.region && <FieldError message={errors.region.message} />}
+                </AnimatePresence>
+              </div>
+
+              {/* Soil Type */}
+              <div>
+                <label htmlFor="soilType" className="block text-sm font-medium text-gray-700 mb-1">
+                  Soil Type <span className="text-red-500" aria-hidden="true">*</span>
+                </label>
+                <div className="relative rounded-md shadow-sm">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <Sprout className="h-5 w-5 text-gray-400" />
-                  </div>
+                  </span>
                   <select
-                    {...register("soilType", { required: true })}
-                    className={`block w-full pl-10 border rounded-lg focus:ring-brand-green focus:border-brand-green py-3 border-gray-300 bg-gray-50 focus:bg-white ${errors.soilType ? 'border-red-500 focus:ring-red-500' : ''}`}
+                    id="soilType"
+                    {...register('soilType', { required: 'Please select a soil type.' })}
+                    aria-invalid={!!errors.soilType}
+                    className={`block w-full pl-10 py-3 border rounded-lg bg-gray-50 focus:bg-white
+                      transition-colors focus:outline-none focus:ring-2
+                      ${errors.soilType
+                        ? 'border-red-400 focus:ring-red-300'
+                        : 'border-gray-300 focus:ring-brand-green focus:border-brand-green'
+                      }`}
                   >
                     <option value="">Select Soil Type</option>
-                    <option value="black soil">Black Soil</option>
-                    <option value="alluvial">Alluvial</option>
-                    <option value="red">Red Soil</option>
-                    <option value="laterite">Laterite</option>
+                    {SOIL_TYPES.map((s) => (
+                      <option key={s.value} value={s.value}>{s.label}</option>
+                    ))}
                   </select>
                 </div>
-                {errors.soilType && (
-                  <span className="text-red-500 text-xs mt-1 block flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" />
-                    {getFieldError('soilType', 'required')}
-                  </span>
-                )}
+                <AnimatePresence>
+                  {errors.soilType && <FieldError message={errors.soilType.message} />}
+                </AnimatePresence>
               </div>
 
+              {/* Upcoming Season */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Upcoming Season <span className="text-red-500">*</span>
+                <label htmlFor="upcomingSeason" className="block text-sm font-medium text-gray-700 mb-1">
+                  Upcoming Season <span className="text-red-500" aria-hidden="true">*</span>
                 </label>
                 <div className="relative rounded-md shadow-sm">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <Sun className="h-5 w-5 text-gray-400" />
-                  </div>
+                  </span>
                   <select
-                    {...register("upcomingSeason", { required: true })}
-                    className={`block w-full pl-10 border rounded-lg focus:ring-brand-green focus:border-brand-green py-3 border-gray-300 bg-gray-50 focus:bg-white ${errors.upcomingSeason ? 'border-red-500 focus:ring-red-500' : ''}`}
+                    id="upcomingSeason"
+                    {...register('upcomingSeason', { required: 'Please select the upcoming season.' })}
+                    aria-invalid={!!errors.upcomingSeason}
+                    className={`block w-full pl-10 py-3 border rounded-lg bg-gray-50 focus:bg-white
+                      transition-colors focus:outline-none focus:ring-2
+                      ${errors.upcomingSeason
+                        ? 'border-red-400 focus:ring-red-300'
+                        : 'border-gray-300 focus:ring-brand-green focus:border-brand-green'
+                      }`}
                   >
                     <option value="">Select Season</option>
-                    <option value="Kharif (Monsoon)">Kharif (Monsoon)</option>
-                    <option value="Rabi (Winter)">Rabi (Winter)</option>
-                    <option value="Zaid (Summer)">Zaid (Summer)</option>
+                    {SEASONS.map((s) => (
+                      <option key={s.value} value={s.value}>{s.label}</option>
+                    ))}
                   </select>
                 </div>
-                {errors.upcomingSeason && (
-                  <span className="text-red-500 text-xs mt-1 block flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" />
-                    {getFieldError('upcomingSeason', 'required')}
-                  </span>
-                )}
+                <AnimatePresence>
+                  {errors.upcomingSeason && <FieldError message={errors.upcomingSeason.message} />}
+                </AnimatePresence>
               </div>
 
+              {/* Water Availability */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Water Availability <span className="text-red-500">*</span>
+                <label htmlFor="waterAvailability" className="block text-sm font-medium text-gray-700 mb-1">
+                  Water Availability <span className="text-red-500" aria-hidden="true">*</span>
                 </label>
                 <div className="relative rounded-md shadow-sm">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <Droplets className="h-5 w-5 text-gray-400" />
-                  </div>
+                  </span>
                   <select
-                    {...register("waterAvailability", { required: true })}
-                    className={`block w-full pl-10 border rounded-lg focus:ring-brand-green focus:border-brand-green py-3 border-gray-300 bg-gray-50 focus:bg-white ${errors.waterAvailability ? 'border-red-500 focus:ring-red-500' : ''}`}
+                    id="waterAvailability"
+                    {...register('waterAvailability', { required: 'Please select water availability.' })}
+                    aria-invalid={!!errors.waterAvailability}
+                    className={`block w-full pl-10 py-3 border rounded-lg bg-gray-50 focus:bg-white
+                      transition-colors focus:outline-none focus:ring-2
+                      ${errors.waterAvailability
+                        ? 'border-red-400 focus:ring-red-300'
+                        : 'border-gray-300 focus:ring-brand-green focus:border-brand-green'
+                      }`}
                   >
                     <option value="">Select Availability</option>
-                    <option value="high">High (Canal/Tubewell)</option>
-                    <option value="medium">Medium (Monsoon dependent)</option>
-                    <option value="low">Low (Dry region)</option>
+                    {WATER_LEVELS.map((w) => (
+                      <option key={w.value} value={w.value}>{w.label}</option>
+                    ))}
                   </select>
                 </div>
-                {errors.waterAvailability && (
-                  <span className="text-red-500 text-xs mt-1 block flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" />
-                    {getFieldError('waterAvailability', 'required')}
-                  </span>
-                )}
+                <AnimatePresence>
+                  {errors.waterAvailability && <FieldError message={errors.waterAvailability.message} />}
+                </AnimatePresence>
               </div>
 
+              {/* Submit button */}
               <div className="pt-2">
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full flex justify-center py-3.5 px-4 border border-transparent rounded-xl shadow-md text-sm font-bold text-white bg-brand-green hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-green transition-all"
+                  className="w-full flex justify-center items-center gap-2 py-3.5 px-4 rounded-xl
+                    shadow-md text-sm font-bold text-white bg-brand-green hover:bg-green-700
+                    disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none
+                    focus:ring-2 focus:ring-offset-2 focus:ring-brand-green transition-all"
                 >
                   {loading ? (
-                    <motion.div
-                      animate={{ rotate: 360 }}
-                      transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
-                      className="w-5 h-5 border-2 border-white border-t-transparent rounded-full"
-                    />
+                    <>
+                      <motion.span
+                        animate={{ rotate: 360 }}
+                        transition={{ repeat: Infinity, duration: 0.9, ease: 'linear' }}
+                        className="w-4 h-4 border-2 border-white border-t-transparent rounded-full inline-block"
+                      />
+                      Analysing your farm…
+                    </>
                   ) : (
-                    'Get AI Recommendation'
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      Get AI Recommendation
+                    </>
                   )}
                 </button>
               </div>
@@ -296,82 +478,58 @@ export default function CropRecommendation() {
             </form>
           </div>
 
-          {/* Results Area */}
-          <div className="md:col-span-7">
-            
-            {!recommendations && !loading && (
-              <div className="bg-white p-10 rounded-2xl shadow-sm border border-dashed border-gray-300 flex flex-col items-center justify-center text-center h-full min-h-[400px]">
-                <Sparkles className="w-16 h-16 text-gray-300 mb-4" />
-                <h3 className="text-xl font-medium text-gray-400">Fill the details to see AI magic</h3>
-                <p className="text-gray-400 mt-2 max-w-sm">We use data from 10k+ farmers and live mandi feeds to recommend your next crop.</p>
+          {/* ── Results panel ──────────────────────────────────────────────── */}
+          <div className="md:col-span-7 flex flex-col gap-6">
+
+            {/* Empty state */}
+            {!recommendations && !loading && !submitError && (
+              <div className="bg-white p-10 rounded-2xl shadow-sm border border-dashed border-gray-300
+                flex flex-col items-center justify-center text-center min-h-[400px]">
+                <Sparkles className="w-16 h-16 text-gray-200 mb-4" />
+                <h3 className="text-xl font-semibold text-gray-400">Fill in your farm details</h3>
+                <p className="text-gray-400 mt-2 max-w-sm text-sm">
+                  We use data from 10 000+ farmers and live mandi feeds to recommend your next crop.
+                </p>
               </div>
             )}
 
+            {/* Skeleton cards while loading */}
+            {loading && (
+              <div className="space-y-6">
+                <SkeletonCard />
+                <SkeletonCard />
+                <SkeletonCard />
+              </div>
+            )}
+
+            {/* Crop results */}
             <AnimatePresence>
-              {recommendations && (
-                <motion.div 
+              {recommendations && !loading && (
+                <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
                   className="space-y-6"
                 >
                   <div className="bg-green-50 border border-brand-green/30 text-green-900 p-4 rounded-xl flex items-center gap-3">
-                    <Sparkles className="w-6 h-6 text-brand-green" />
+                    <Sparkles className="w-5 h-5 text-brand-green shrink-0" />
                     <div>
-                      <p className="font-bold">Analysis Complete!</p>
-                      <p className="text-sm">Found 3 optimal crops for your land conditions.</p>
+                      <p className="font-bold text-sm">Analysis complete!</p>
+                      <p className="text-sm">
+                        Found <strong>{recommendations.length}</strong> optimal crop
+                        {recommendations.length !== 1 ? 's' : ''} for your land conditions.
+                      </p>
                     </div>
                   </div>
 
                   {recommendations.map((rec, i) => (
-                    <motion.div
-                      key={rec.name}
-                      initial={{ opacity: 0, x: 50 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: i * 0.2 }}
-                      whileHover={{ scale: 1.02 }}
-                      className={`p-6 rounded-2xl border ${rec.color} relative overflow-hidden shadow-sm`}
-                    >
-                      <div className="absolute top-0 right-0 p-4">
-                        <div className="bg-white/80 backdrop-blur font-bold text-sm px-3 py-1 rounded-full shadow-sm flex gap-1 items-center">
-                          {rec.match}% Match
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-4 mb-4">
-                        <div className="bg-white p-3 rounded-xl shadow-sm">
-                          {rec.icon}
-                        </div>
-                        <h3 className="text-2xl font-bold text-gray-900">{rec.name}</h3>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4 mt-6">
-                        <div className="bg-white/60 p-3 rounded-lg">
-                          <p className="text-xs text-gray-500 uppercase font-semibold">Expected Yield</p>
-                          <p className="font-bold text-gray-900 mt-1">{rec.yield}</p>
-                        </div>
-                        <div className="bg-white/60 p-3 rounded-lg">
-                          <p className="text-xs text-gray-500 uppercase font-semibold">Profit Potential</p>
-                          <p className="font-bold text-brand-green mt-1 flex items-center gap-1">
-                            {rec.profit} <TrendingUp className="w-4 h-4" />
-                          </p>
-                        </div>
-                        <div className="col-span-2 bg-white/60 p-3 rounded-lg">
-                          <p className="text-xs text-gray-500 uppercase font-semibold">Market Demand</p>
-                          <p className="font-bold text-gray-900 mt-1">{rec.demand}</p>
-                        </div>
-                      </div>
-
-                      <button className="mt-6 flex items-center gap-2 text-sm font-bold text-gray-900 bg-white px-4 py-2 rounded-lg hover:bg-gray-50 shadow-sm transition-colors border border-gray-200 w-max">
-                        View Detailed Guide <ArrowRight className="w-4 h-4" />
-                      </button>
-
-                    </motion.div>
+                    <CropCard key={`${rec.name}-${i}`} rec={rec} index={i} />
                   ))}
                 </motion.div>
               )}
             </AnimatePresence>
-          </div>
 
+          </div>
         </div>
       </div>
     </div>

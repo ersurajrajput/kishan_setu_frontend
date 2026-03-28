@@ -69,7 +69,7 @@ export default function Dashboard() {
     totalCrops: 0,
     ordersReceived: 0,
     marketTrend: 'Up 4%',
-    weather: '28°C / Sunny',
+    
   });
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -98,11 +98,11 @@ export default function Dashboard() {
         
         const cropsRes = await api.get('/crops/my').catch(() => ({ data: [] }));
         const ordersRes = await api.get('/orders/my').catch(() => ({ data: [] }));
-        const weatherRes = await api.get('/weather?city=Sehore').catch(() => ({ data: {} }));
+        // const weatherRes = await api.get('/weather?city=Sehore').catch(() => ({ data: {} }));
 
         const crops = cropsRes.data || [];
         const orders = ordersRes.data || [];
-        const weather = weatherRes.data || {};
+        // const weather = weatherRes.data || {};
 
         // Store listings in state
         setListings(listings);
@@ -112,19 +112,19 @@ export default function Dashboard() {
           totalCrops: listings.length || crops.length,
           ordersReceived: orders.length || 0,
           marketTrend: 'Up 4%',
-          weather: weather.current ? `${Math.round(weather.current.temp)}°C / ${weather.current.condition}` : '28°C / Sunny',
+          // weather: weather.current ? `${Math.round(weather.current.temp)}°C / ${weather.current.condition}` : '28°C / Sunny',
         });
 
         // Generate notifications
         const newNotifications = [];
-        if (weather.alerts && weather.alerts.length > 0) {
-          newNotifications.push({
-            type: 'weather',
-            icon: <CloudRain className="h-5 w-5 text-blue-500" />,
-            title: 'Weather Alert',
-            message: weather.alerts[0],
-          });
-        }
+        // if (weather.alerts && weather.alerts.length > 0) {
+        //   newNotifications.push({
+        //     type: 'weather',
+        //     icon: <CloudRain className="h-5 w-5 text-blue-500" />,
+        //     title: 'Weather Alert',
+        //     message: weather.alerts[0],
+        //   });
+        // }
         if (orders.length > 0) {
           newNotifications.push({
             type: 'order',
@@ -151,7 +151,7 @@ export default function Dashboard() {
     { title: 'Total Crops Listed', value: stats.totalCrops.toString(), icon: <Package className="h-6 w-6 text-brand-green" />, color: 'bg-green-100' },
     { title: 'Orders Received', value: stats.ordersReceived.toString(), icon: <ShoppingCart className="h-6 w-6 text-blue-600" />, color: 'bg-blue-100' },
     { title: 'Market Prices', value: stats.marketTrend, icon: <TrendingUp className="h-6 w-6 text-brand-yellow" />, color: 'bg-yellow-100' },
-    { title: 'Weather', value: stats.weather, icon: <CloudRain className="h-6 w-6 text-indigo-600" />, color: 'bg-indigo-100' },
+    // { title: 'Weather', value: stats.weather, icon: <CloudRain className="h-6 w-6 text-indigo-600" />, color: 'bg-indigo-100' },
   ];
 
   return (

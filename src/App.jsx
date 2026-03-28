@@ -9,7 +9,7 @@ import SellCrop from './pages/SellCrop';
 import Marketplace from './pages/Marketplace';
 import AIFarmAssistant from './pages/AIFarmAssistant';
 import CropRecommendation from './pages/CropRecommendation';
-import Weather from './pages/Weather';
+// import Weather from './pages/Weather';
 import KnowledgeHub from './pages/KnowledgeHub';
 import Profile from './pages/Profile';
 
@@ -33,7 +33,7 @@ function App() {
           <Route path="my-listings" element={<Profile />} />
           <Route path="ai-assistant" element={<AIFarmAssistant />} />
           <Route path="recommendation" element={<CropRecommendation />} />
-          <Route path="weather" element={<Weather />} />
+          {/* <Route path="weather" element={<Weather />} /> */}
           <Route path="profile" element={<Profile />} />
         </Route>
       </Routes>

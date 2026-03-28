@@ -9,7 +9,7 @@ const sidebarLinks = [
   { name: 'My Listings', icon: <List className="h-5 w-5" />, path: '/my-listings' },
   { name: 'AI Assistant', icon: <Bot className="h-5 w-5" />, path: '/ai-assistant' },
   { name: 'Crop Recommendation', icon: <Sprout className="h-5 w-5" />, path: '/recommendation' },
-  { name: 'Weather Alerts', icon: <CloudRain className="h-5 w-5" />, path: '/weather' },
+  // { name: 'Weather Alerts', icon: <CloudRain className="h-5 w-5" />, path: '/weather' },
   { name: 'Profile', icon: <User className="h-5 w-5" />, path: '/profile' },
 ];
 

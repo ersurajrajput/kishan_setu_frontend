@@ -8,7 +8,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'https://kishansetubackend-c0fgdjbkbthsaagz.centralindia-01.azurewebsites.net',
+        target: 'http://localhost:8080/',
         changeOrigin: true,
         ws: true,
       },
